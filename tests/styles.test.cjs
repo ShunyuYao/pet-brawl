@@ -2,6 +2,7 @@
 // Acceptance tests for the three new styles (SPEC §5A). Same rules as rules.test.cjs:
 // everything is driven through controller inputs; M.place only positions fighters.
 const test=require('node:test'),assert=require('node:assert/strict');
+const {assertPoses}=require('./pose-assertions.cjs');
 const F=require('../game/formulas.cjs'),M=require('../game/match.cjs'),I=require('../game/input.cjs');
 const KO=require('../game/ko.cjs'),St=require('../game/stage.cjs'),R=require('../game/room.cjs'),AI=require('../game/ai.cjs');
 const FRESH=F.FRESH_BONUS,ONE=F.ONE_V_ONE;
@@ -9,7 +10,7 @@ const near=(a,b,eps=1e-6)=>Math.abs(a-b)<=eps;
 function rig(styles,opts={}){
   const m=M.create({stocks:3,timeLimit:480,countdown:false,styles,...opts});
   const pads=[I.create(),I.create()];
-  const run=(n=1)=>{for(let i=0;i<n;i++){M.setInput(m,0,pads[0]);M.setInput(m,1,pads[1]);M.step(m);}};
+  const run=(n=1)=>{for(let i=0;i<n;i++){M.setInput(m,0,pads[0]);M.setInput(m,1,pads[1]);M.step(m);assertPoses(m);}};
   return {m,pads,run,f:m.fighters};
 }
 function until(r,cond,max=600,label='condition'){for(let i=1;i<=max;i++){r.run(1);if(cond())return i;}assert.fail('timeout waiting for '+label);}

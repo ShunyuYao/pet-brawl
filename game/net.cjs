@@ -142,7 +142,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     peek:()=>room?room.view(0):view,
     // What to draw right now: the host's live match, or the guest's prediction.
     live:()=>room?room.room.match:pred,
-    hostStale:()=>!host&&!!view&&(connection!=='connected'||now()-lastViewAt>STALE_MS),
+    hostStale:()=>!host&&!closed&&!disposed&&!!view&&(connection!=='connected'||now()-lastViewAt>STALE_MS),
     setProfile(p,a){profile=R.validateProfile(p);asset=a||null;sentSignature='';lastHello=0;if(room)room.join(0,profile);},
     setInput(v){if(room)room.input(0,v);else{pad=I.normalize(v,pad);pad.seq=seq;void guestSend();}},
     ready(value){if(closed)throw Error('session_closed');if(room)room.ready(0,value);else{readySeq++;readyWant=!!value;lastHello=0;void guestSend(true);}},

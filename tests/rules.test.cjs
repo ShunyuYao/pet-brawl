@@ -4,6 +4,7 @@
 // nothing sets an internal state flag to fake a precondition. Test-only helpers
 // (M.place) only position fighters on the stage, like picking a spot in training mode.
 const test=require('node:test'),assert=require('node:assert/strict');
+const {assertPoses}=require('./pose-assertions.cjs');
 const F=require('../game/formulas.cjs'),M=require('../game/match.cjs'),I=require('../game/input.cjs');
 const H=require('../game/styles/hammer.cjs'),KO=require('../game/ko.cjs'),AI=require('../game/ai.cjs'),St=require('../game/stage.cjs');
 
@@ -11,7 +12,7 @@ const FRESH=F.FRESH_BONUS,ONE=F.ONE_V_ONE;
 function rig(opts={}){
   const m=M.create({stocks:3,timeLimit:480,countdown:false,...opts});
   const pads=[I.create(),I.create()];
-  const run=(n=1,each)=>{for(let i=0;i<n;i++){each?.(i);M.setInput(m,0,pads[0]);M.setInput(m,1,pads[1]);M.step(m);}};
+  const run=(n=1,each)=>{for(let i=0;i<n;i++){each?.(i);M.setInput(m,0,pads[0]);M.setInput(m,1,pads[1]);M.step(m);assertPoses(m);}};
   return {m,pads,run,f:m.fighters};
 }
 // Step until cond() is true; returns the number of steps taken (fails after max).

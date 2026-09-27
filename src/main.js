@@ -168,7 +168,9 @@ async function startSolo(){
 }
 function applyCpuStyle(){if(transport?.role()!=='solo')return;const s=prefs.cpuStyle==='random'?STYLE_IDS[Math.floor(Math.random()*STYLE_IDS.length)]:prefs.cpuStyle;transport.setCpuStyle(s);}
 async function startLan(){
-  transport=Net.create(sdk.sessions,{onView,onConnection,onAsset,onError:e=>{if(!/backpressure/.test(e.message))error(describe(e));}});
+  // Recoverable transport gaps already have the pause/reconnect banner. Do not
+  // leave an IPC error over the arena after the same connection has recovered.
+  transport=Net.create(sdk.sessions,{onView,onConnection,onAsset,onError:e=>{if(!/\b(backpressure|peer_offline|not_connected)\b/.test(e.message))error(describe(e));}});
   const ctx=await transport.start(profileOf(driver),driver.asset);
   view={you:ctx.role==='host'?0:1,players:[],matchNo:0};
   // The host starts the lobby on its remembered stage; it can still change it there.

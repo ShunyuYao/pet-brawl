@@ -190,6 +190,30 @@ async function importDoll(app){
   const ws=new WebSocket(app.game.webSocketDebuggerUrl);await new Promise(r=>ws.onopen=r);let n=0;const call=(method,params)=>new Promise((res,rej)=>{const id=++n;ws.addEventListener('message',function f(e){const m=JSON.parse(e.data);if(m.id===id){ws.removeEventListener('message',f);m.error?rej(Error(JSON.stringify(m.error))):res(m.result);}});ws.send(JSON.stringify({id,method,params}));});
   const {result}=await call('Runtime.evaluate',{expression:'document.querySelector("#import-file")'});await call('DOM.setFileInputFiles',{files:[file],objectId:result.objectId});ws.close();
 }
+async function shortOutage(a,b){
+  const matchNo=(await state(a)).view.matchNo;let pausedFrame;
+  // Suspend only this test's guest main process: its actual IPC/network channel
+  // stalls while the host must keep rendering the pause notice. Never touch the
+  // user's running pet or fake transport state in the game.
+  try{
+    process.kill(b.child.pid,'SIGSTOP');
+    await wait(async()=>!!(await state(a)).view.pause,'host detects guest outage',8000);
+    pausedFrame=(await state(a)).match.frame;await H.sleep(250);
+    assert.equal((await state(a)).match.frame,pausedFrame,'simulation pauses during outage');
+    await wait(()=>H.evalIn(a.game,'!document.querySelector("#banner").hidden && document.querySelector("#banner").textContent.includes("等待重连")'),'visible reconnect notice');
+    assert(await H.evalIn(a.game,'document.querySelector("#error").hidden'),'recoverable outage uses the reconnect notice without a raw IPC error');
+    await screenshot(a.game,'short-outage-paused');
+  }finally{process.kill(b.child.pid,'SIGCONT');}
+  for(const app of [a,b])await wait(async()=>{
+    const s=await state(app);return !s.view.pause&&s.match.frame>pausedFrame&&s.match.phase==='fight';
+  },'same fight resumes '+app.label,8000);
+  assert.equal((await state(a)).view.matchNo,matchNo);
+  assert(await H.evalIn(a.game,'document.querySelector("#error").hidden'),'no stale transport error after recovery');
+  const before=(await state(a)).match.stats[1].pressesSeen.attack;
+  await tap(b.game,'KeyJ');
+  await wait(async()=>(await state(a)).match.stats[1].pressesSeen.attack===before+1,'fresh guest input after outage',3000);
+  check('short guest outage pauses with a notice, then resumes the same fight and accepts real input');
+}
 async function mageFreezePlay(a,b){
   await activateButton(a.game,'#lobby-style [data-value="grappler"]');
   await activateButton(b.game,'#lobby-style [data-value="mage"]');
@@ -232,8 +256,10 @@ async function mageFreezePlay(a,b){
   const x=(await fighters(a))[1].x;await k(b.game,'KeyA');await H.sleep(300);await k(b.game,'KeyA','keyUp');
   await wait(async()=>(await fighters(a))[1].x<x-1,'guest can still move after casting');
   check('guest real keyboard still moves the authoritative fighter after casting');
-  await activateButton(b.game,'#leave');await wait(async()=>(await state(a)).connection==='closed','peer observes leave after casting');
-  check('leaving after the special explicitly ends the peer session');
+  await activateButton(a.game,'#leave');await wait(async()=>(await state(b)).connection==='closed','guest observes host leave after casting');
+  await wait(()=>H.evalIn(b.game,'!document.querySelector("#banner").hidden && document.querySelector("#banner").textContent==="联机已结束"'),'terminal guest notice does not ask for reconnection');
+  await screenshot(b.game,'host-left-ended');
+  check('host leaving after the special ends the guest session without a misleading reconnect notice');
   for(const app of [a,b])await closeWork(app);
 }
 async function brawlPlay(a,b){
@@ -301,6 +327,7 @@ async function brawlPlay(a,b){
   for(let i=0;i<5;i++){await tap(b.game,'KeyJ');await H.sleep(160);}
   await wait(async()=>(await state(a)).match.stats[1].pressesSeen.attack===before+5,'host saw five guest J presses',5000);
   check('five guest J presses all reach the host');
+  await shortOutage(a,b);
   // Trade some blows until someone takes damage.
   await wait(async()=>{
     const f=await fighters(a);if(!f)return false;

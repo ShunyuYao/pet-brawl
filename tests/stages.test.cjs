@@ -2,12 +2,13 @@
 // SPEC §8 / §11-23…26: the three stages. Everything is driven by the same input
 // objects the keyboard produces; M.place only picks a starting spot, like training mode.
 const test=require('node:test'),assert=require('node:assert/strict');
+const {assertPoses}=require('./pose-assertions.cjs');
 const M=require('../game/match.cjs'),I=require('../game/input.cjs'),AI=require('../game/ai.cjs'),St=require('../game/stage.cjs'),R=require('../game/room.cjs');
 
 function rig(stage,styles=['hammer','hammer']){
   const m=M.create({stocks:3,timeLimit:480,countdown:false,styles,stage});
   const pads=[I.create(),I.create()];
-  const run=(n=1)=>{for(let i=0;i<n;i++){M.setInput(m,0,pads[0]);M.setInput(m,1,pads[1]);M.step(m);}};
+  const run=(n=1)=>{for(let i=0;i<n;i++){M.setInput(m,0,pads[0]);M.setInput(m,1,pads[1]);M.step(m);assertPoses(m);}};
   return {m,pads,run,f:m.fighters};
 }
 function until(r,cond,max=600,label='condition'){for(let i=1;i<=max;i++){r.run(1);if(cond())return i;}assert.fail('timeout waiting for '+label);}

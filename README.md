@@ -66,8 +66,10 @@ A single-file HTML platform fighter for the 吐梨邦 desktop pet. Opened inside
 
 ```sh
 npm run build          # esbuild 打包成单个内联脚本（可用 PET_BRAWL_ESBUILD 指定 esbuild 路径）
-npm run test:rules     # 规则、招式、姿势、击杀百分比、地图与联机协议（Node，335 条）
+npm run test:rules     # 规则、招式、姿势、完整对局、地图与联机协议（Node，344 条）
 npm run test:poses     # 八流派四向必杀的姿势与网络快照回归
+npm run test:stability # 192 场全流派/地图组合，逐帧姿势及吞吐投射物
+npm run test:net       # 联机协议、断线恢复、结束状态
 npm run test:freeze    # 法师缠线：真实键盘、画面与计时持续更新
 npm run calibrate      # 改了招式伤害、角度、帧数或击杀目标后，重新反推击飞参数
 npm run balance        # 高手电脑八个流派两两对打，每组 200 局，胜率须在 25%–75%

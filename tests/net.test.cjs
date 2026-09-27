@@ -20,7 +20,7 @@ function pair({latency=15}={}){
     readTransfer:async({transferId})=>me.assets.get(transferId),
     leave:async()=>{open=false;push(sides.host,{type:'closed',reason:'peer_left'});push(sides.guest,{type:'closed',reason:'peer_left'});return {released:true,peerAcknowledged:true};},
   };};
-  return {host:make('host'),guest:make('guest'),cut:role=>{sides[role].mute=true;},sent};
+  return {host:make('host'),guest:make('guest'),cut:role=>{sides[role].mute=true;},heal:role=>{sides[role].mute=false;},sent};
 }
 const wait=async(fn,label,ms=8000)=>{const until=Date.now()+ms;while(Date.now()<until){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,15));}throw Error('timeout '+label);};
 const P=(name,sig)=>({name,signature:sig,kind:'sprite',color:'#ff0000'});
@@ -116,6 +116,23 @@ test('host gone: the guest notices stale views',async()=>{
   L.sdk.cut('host');
   await wait(()=>L.g.hostStale(),'guest notices',4000);
   L.h.dispose();L.g.dispose();
+});
+test('short guest outage resumes the same match and accepts fresh input',async()=>{
+  const L=await lobby();await fight(L);
+  const matchNo=L.h.peek().matchNo;
+  L.sdk.cut('guest');await wait(()=>L.h.peek().pause&&L.views.g.pause,'both paused',4000);
+  const frame=L.h.live().frame;await new Promise(r=>setTimeout(r,150));
+  assert.equal(L.h.live().frame,frame);
+  L.sdk.heal('guest');await wait(()=>!L.h.peek().pause&&!L.views.g.pause,'pause lifted',3000);
+  await wait(()=>L.h.live().frame>frame&&L.g.live().frame>frame,'both advance',2000);
+  const x=L.h.live().fighters[1].x,pad=I.create();pad.x=-1;L.g.setInput(pad);
+  await wait(()=>L.h.live().fighters[1].x<x-3,'guest input works after recovery',2000);
+  assert.equal(L.h.peek().matchNo,matchNo);assert.equal(L.h.live().phase,'fight');assert.deepEqual(L.errors,[]);
+});
+test('a closed guest session reports ended instead of waiting for the host to reconnect',async()=>{
+  const L=await lobby();await fight(L);await L.h.leave();
+  await wait(()=>L.g.diagnostics().closed,'guest observes host leave',2000);
+  assert.equal(L.g.hostStale(),false,'closed is terminal, not a stale live connection');
 });
 test('solo room fights the computer',async()=>{
   let v=null;const s=Solo.create({onView:x=>v=x});live.push(s);await s.start(P('我','sig-me'));

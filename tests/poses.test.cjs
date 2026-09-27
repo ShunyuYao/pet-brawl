@@ -2,17 +2,8 @@
 // Exercise the actual presentation module with simulation-generated fighter states,
 // including the snapshot/restore representation consumed by a network guest.
 const test=require('node:test'),assert=require('node:assert/strict');
-const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const M=require('../game/match.cjs'),I=require('../game/input.cjs');
-const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pet-brawl-poses-'));
-const esbuild=require(process.env.PET_BRAWL_ESBUILD||path.resolve(__dirname,'../../../demo/node_modules/esbuild'));
-esbuild.buildSync({entryPoints:[path.resolve(__dirname,'../src/poses.js')],bundle:true,platform:'node',format:'cjs',outfile:path.join(dir,'poses.cjs'),logLevel:'silent'});
-const {computePose}=require(path.join(dir,'poses.cjs'));
-test.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
-function finite(value,label){
-  if(typeof value==='number')assert(Number.isFinite(value),label+' must be finite');
-  else if(value&&typeof value==='object')for(const [key,v] of Object.entries(value))finite(v,label+'.'+key);
-}
+const {computePose,finite}=require('./pose-assertions.cjs');
 function runSpecial(style,x,y){
   const m=M.create({countdown:false,styles:[style,'grappler']});
   M.place(m,0,{x:0,y:0,facing:1});M.place(m,1,{x:-80,y:0,facing:1});
