@@ -352,7 +352,8 @@ async function brawlPlay(a,b){
     for(const app of [a,b])await installAppearances(app);
     await applyMain(a,'rat-doll-male');await applyMain(b,'rat-doll-female');
     await sendGame(a,b);await approvals(a,b);
-    if(process.env.BRAWL_FREEZE_ONLY==='1')await mageFreezePlay(a,b);
+    if(process.env.BRAWL_SMOOTHNESS==='1')await require('./smoothness-host.cjs').run({a,b,H,wait,state,activateButton,check,screenshot,json,evidence,report,k});
+    else if(process.env.BRAWL_FREEZE_ONLY==='1')await mageFreezePlay(a,b);
     else await brawlPlay(a,b);
   }catch(error){
     report.failures.push(error.message);report.error=error.stack;console.error(error);
