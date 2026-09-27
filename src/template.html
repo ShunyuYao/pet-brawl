@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>桌宠大乱斗</title>
+  <script type="application/json" id="pet-sdk">{"version":2,"permissions":["character:read","character:watch","sessions:connect"],"network":["lan"],"interaction":{"players":2,"transport":"lan","protocol":{"id":"pet-brawl","version":1}}}</script>
+  <style>__STYLE__</style>
+</head>
+<body>
+  <canvas id="stage" aria-label="对战舞台"></canvas>
+
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true">🧀</span><strong>桌宠大乱斗</strong><span id="conn" class="conn" role="status" hidden></span></div>
+    <div class="tools">
+      <button id="keys-btn" class="pill" type="button" aria-expanded="false">键位</button>
+      <button id="music" class="pill" type="button" aria-pressed="false">音乐 关</button>
+      <button id="sfx" class="pill" type="button" aria-pressed="false">音效 关</button>
+      <button id="leave" class="pill ghost" type="button" hidden>离开</button>
+    </div>
+  </header>
+  <div id="error" class="error" role="alert" hidden></div>
+  <div id="banner" class="banner" role="status" hidden></div>
+
+  <section id="hud" class="hud" hidden aria-label="对战信息">
+    <div id="timer" class="timer">8:00</div>
+    <div class="plates">
+      <div id="plate-0" class="plate" data-seat="0"><div class="plate-portrait"></div><div class="plate-body"><div class="plate-name"></div><div class="plate-pct"><strong>0</strong><small>%</small></div><div class="plate-stocks"></div><div class="plate-extra" hidden></div></div></div>
+      <div id="plate-1" class="plate" data-seat="1"><div class="plate-portrait"></div><div class="plate-body"><div class="plate-name"></div><div class="plate-pct"><strong>0</strong><small>%</small></div><div class="plate-stocks"></div><div class="plate-extra" hidden></div></div></div>
+    </div>
+  </section>
+  <div id="announce" class="announce" hidden aria-live="assertive"></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <div id="menu" class="menu">
+    <section id="title-panel" class="panel title-panel" aria-labelledby="title-h">
+      <div class="eyebrow">DESKTOP PET BRAWL</div>
+      <h1 id="title-h">带上你的桌宠，<br>挑个流派开打。</h1>
+      <div class="fighter-card">
+        <div id="fighter-portrait" class="portrait" aria-hidden="true">🐭</div>
+        <div class="fighter-info"><small>出战形象</small><strong id="fighter-name">…</strong><span id="fighter-kind" class="kind-tag"></span></div>
+      </div>
+      <div id="grant-box" class="grant-box" hidden><p id="grant-text"></p><button id="grant-retry" class="chip" type="button">🔓 重新请求授权</button></div>
+      <p id="pet-auto" class="pet-auto" hidden></p>
+      <div class="field-label">流派</div>
+      <div id="style-list" class="styles" role="radiogroup" aria-label="流派">
+        <button class="style-card" type="button" role="radio" aria-checked="true" data-style="hammer"><span class="style-icon">🧀</span><strong>奶酪大锤</strong><small>重型力量 · 慢但重，复活远</small></button>
+        <button class="style-card" type="button" role="radio" aria-checked="false" data-style="cat"><span class="style-icon">🐾</span><strong>猫爪拳</strong><small>轻量快攻 · 出招最快，会反击</small></button>
+        <button class="style-card" type="button" role="radio" aria-checked="false" data-style="mage"><span class="style-icon">🧶</span><strong>毛线球法师</strong><small>远程牵制 · 蓄力弹、减速、陷阱</small></button>
+        <button class="style-card" type="button" role="radio" aria-checked="false" data-style="ninja"><span class="style-icon">🥷</span><strong>纸箱忍者</strong><small>灵巧诡变 · 瞬身斩、替身</small></button>
+        <button class="style-card" type="button" role="radio" aria-checked="false" data-style="sword"><span class="style-icon">🪶</span><strong>逗猫棒剑士</strong><small>精准距离 · 剑尖最痛、逗猫连击</small></button>
+        <button class="style-card" type="button" role="radio" aria-checked="false" data-style="grappler"><span class="style-icon">💪</span><strong>肉垫摔角手</strong><small>投技重炮 · 指令投、蓄怒翻盘</small></button>
+        <button class="style-card" type="button" role="radio" aria-checked="false" data-style="boxer"><span class="style-icon">🥊</span><strong>拳击喵</strong><small>地面拳王 · 能量满一拳必杀，空中弱</small></button>
+        <button class="style-card" type="button" role="radio" aria-checked="false" data-style="swift"><span class="style-icon">⚡</span><strong>疾风猫</strong><small>高速爆发 · 跑最快、膝撞、疾风重拳</small></button>
+      </div>
+      <p class="note style-note">形象和流派互不绑定：任何形象都能选任何流派。</p>
+      <details id="swap" class="import">
+        <summary>换个形象（可选）</summary>
+        <div class="import-row">
+          <button id="use-pet" class="chip" type="button" hidden>🐾 用当前桌宠</button>
+          <label class="chip file">📦 导入角色包 / 图片<input id="import-file" type="file" accept=".zip,image/png,image/webp,image/jpeg,image/gif"></label>
+          <label class="chip file">📁 导入角色文件夹<input id="import-folder" type="file" webkitdirectory></label>
+        </div>
+        <div id="toy-row" class="import-row toys"><small>内置形象：</small></div>
+        <p class="import-help">3D 布偶：导入带实时布偶数据的角色包，会以真 3D 骨骼上场。2D：任意 PNG / WebP 图片或普通角色包。也可以直接把文件拖进窗口。</p>
+      </details>
+      <p id="import-status" class="import-status" role="status"></p>
+      <div class="solo-opts">
+        <div><div class="field-label">电脑难度</div><div id="cpu-list" class="chips"></div></div>
+        <div class="span2"><div class="field-label">电脑流派</div><div id="cpu-style-list" class="chips"></div></div>
+        <div><div class="field-label">时间上限</div><div id="time-list" class="chips"></div></div>
+        <div class="span2"><div class="field-label">地图</div><div id="stage-list" class="chips"></div></div>
+      </div>
+      <button id="solo" class="primary" type="button">单人对战 · 挑战电脑</button>
+      <p id="env-note" class="note"></p>
+    </section>
+
+    <section id="lobby-panel" class="panel" hidden aria-labelledby="lobby-title">
+      <div class="eyebrow">READY ROOM</div>
+      <h2 id="lobby-title">双人对战</h2>
+      <div id="lobby-players" class="players"></div>
+      <div class="field-label">我的流派</div>
+      <div id="lobby-style" class="chips"></div>
+      <div class="field-label">地图 <small id="stage-hint"></small></div>
+      <div id="lobby-stage" class="chips"></div>
+      <div class="field-label">时间上限 <small id="time-hint"></small></div>
+      <div id="lobby-time" class="chips"></div>
+      <p class="note">每人 3 条命。时间到时比剩余命数，再比百分比，仍平手就 300% 决胜。</p>
+      <button id="ready" class="primary" type="button">我准备好了</button>
+      <p id="lobby-note" class="note"></p>
+    </section>
+
+    <section id="results-panel" class="panel" hidden aria-labelledby="results-title">
+      <div class="eyebrow">GAME SET</div>
+      <h2 id="results-title">胜负已分！</h2>
+      <p id="results-reason" class="note"></p>
+      <div id="results-players" class="results"></div>
+      <button id="again" class="primary" type="button">再来一局</button>
+      <p id="results-note" class="note"></p>
+    </section>
+  </div>
+
+  <aside id="keys-panel" class="keys-panel" hidden aria-label="键位说明">
+    <h3>键位</h3>
+    <table>
+      <tr><td><kbd>A</kbd><kbd>D</kbd></td><td>移动，快速双击冲刺</td></tr>
+      <tr><td><kbd>W</kbd></td><td>上 / 跳跃（可关）</td></tr>
+      <tr><td><kbd>S</kbd></td><td>蹲下 · 穿平台 · 快速下落</td></tr>
+      <tr><td><kbd>空格</kbd></td><td>跳跃：轻点短跳，按住大跳</td></tr>
+      <tr><td><kbd>J</kbd></td><td>普通攻击（配合方向）</td></tr>
+      <tr><td><kbd>K</kbd></td><td>必杀技（配合方向）</td></tr>
+      <tr><td><kbd>U</kbd></td><td>重击，按住蓄力</td></tr>
+      <tr><td><kbd>L</kbd></td><td>盾 · 盾+方向闪避 · 空中闪避</td></tr>
+      <tr><td><kbd>I</kbd></td><td>抓人（或 L+J）</td></tr>
+    </table>
+    <p id="keys-tips" class="keys-tips"></p>
+    <button id="tapjump" class="chip" type="button" aria-pressed="true">W 键跳跃：开</button>
+  </aside>
+  <div class="drop-hint" aria-hidden="true">松手导入形象</div>
+  <script>__SCRIPT__</script>
+</body>
+</html>

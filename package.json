@@ -1,0 +1,19 @@
+{
+  "name": "pet-brawl",
+  "version": "0.5.0",
+  "private": true,
+  "license": "MIT",
+  "description": "桌宠大乱斗：带上桌宠形象的双人平台格斗单文件 HTML，8 个流派、3 张地图，支持局域网双人与单人对战电脑",
+  "scripts": {
+    "build": "node scripts/build.cjs",
+    "calibrate": "node tools/calibrate.cjs",
+    "test:rules": "node --test tests/rules.test.cjs tests/styles.test.cjs tests/styles2.test.cjs tests/stages.test.cjs tests/net.test.cjs",
+    "test:browser": "node tests/browser-e2e.cjs",
+    "test:host": "node tests/host-e2e.cjs",
+    "test": "npm run build && npm run test:rules && npm run test:browser",
+    "balance": "node tools/balance.cjs 200"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

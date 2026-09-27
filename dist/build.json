@@ -1,0 +1,13 @@
+{
+  "file": "/Users/shunyu/projects/desktop_pet/桌宠测试版/vibe_contents/pet-brawl/dist/桌宠大乱斗.html",
+  "bytes": 842704,
+  "sha256": "77eb9f8894d7d93a3bc443923cf0510dff75dcb0945c3239ce4f20920a4287d6",
+  "version": "0.5.0",
+  "protocol": {
+    "id": "pet-brawl",
+    "version": 1
+  },
+  "esbuild": "0.28.1",
+  "three": "0.164.1",
+  "cannon": "0.20.0"
+}
