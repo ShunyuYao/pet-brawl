@@ -411,7 +411,7 @@ function frame(now){
   if(m&&transport){processEvents(m);hud(m);}
   // Menus show the stage that will be fought on (title: my pick; lobby: the host's).
   if(!(m&&transport))world.setStage(view?.settings?.stage||prefs.stage);
-  world.update({match:transport?m:null,dt,events:m&&transport?eventsFor(m):[]});
+  world.update({match:transport?(transport.present?.()||m):null,dt,events:m&&transport?eventsFor(m):[]});
   requestAnimationFrame(frame);
 }
 

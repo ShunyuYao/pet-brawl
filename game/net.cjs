@@ -6,6 +6,7 @@
 // Limits honoured (demo/core/peer-session/contracts.js): latest lane ≤ 30 calls/s,
 // ≤ 60 KB per message, ≤ 8 latest keys; transfers ≤ 1 MB each, one at a time.
 const R=require('./room.cjs'),M=require('./match.cjs'),I=require('./input.cjs');
+const RemoteMotion=require('./remote-motion.cjs');
 
 const PROTOCOL={id:'pet-brawl',version:1},PURPOSE='brawl.profile.v1';
 const VIEW_MS=40,INPUT_MS=40,SIM_MS=1000/60,STALE_MS=1500;
@@ -19,6 +20,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
   let pad=I.create(),readySeq=0,readyWant=false,guestReadySeq=0,sendingView=false,sendingInput=false,lastInputSent=0,lastSentKey='';
   // Guest prediction state
   let view=null,pred=null,predMatchNo=-1,seq=0,history=[],lastViewAt=0;
+  const remoteMotion=RemoteMotion.create();
   const timers=[];
   const fail=e=>onError(e instanceof Error?e:Error(String(e)));
   const status=s=>{if(connection!==s){connection=s;onConnection(s);}};
@@ -110,7 +112,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     }
     if(type!=='brawl.view'||!p||!Number.isSafeInteger(p.serial)||p.serial<=applied)return;
     if(!R.validView(p.view)||p.view.you!==1)throw Error('invalid_view');
-    applied=p.serial;view=p.view;lastViewAt=now();reconcile(view);onView(view);
+    applied=p.serial;view=p.view;lastViewAt=now();remoteMotion.push(view,lastViewAt);reconcile(view);onView(view);
   }
   async function poll(){
     while(!disposed&&!closed){
@@ -142,6 +144,9 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     peek:()=>room?room.view(0):view,
     // What to draw right now: the host's live match, or the guest's prediction.
     live:()=>room?room.room.match:pred,
+    // Drawing the remote peer must not rewind when our input ack advances.
+    // Local prediction stays immediate and retains its full collision world.
+    present:()=>room?room.room.match:remoteMotion.sample(pred,now(),closed),
     hostStale:()=>!host&&!closed&&!disposed&&!!view&&(connection!=='connected'||now()-lastViewAt>STALE_MS),
     setProfile(p,a){profile=R.validateProfile(p);asset=a||null;sentSignature='';lastHello=0;if(room)room.join(0,profile);},
     setInput(v){if(room)room.input(0,v);else{pad=I.normalize(v,pad);pad.seq=seq;void guestSend();}},

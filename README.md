@@ -7,6 +7,10 @@ A single-file HTML platform fighter for the 吐梨邦 desktop pet. Opened inside
 交付文件：[`dist/桌宠大乱斗.html`](dist/桌宠大乱斗.html)（约 840 KB，three.js、cannon-es 与全部代码内联，无 CDN、无服务器）。
 完整规则、招式表与平衡记录：[docs/SPEC.zh-CN.md](docs/SPEC.zh-CN.md)。
 
+最新版：[v0.5.1 下载与更新说明](https://github.com/ShunyuYao/pet-brawl/releases/tag/v0.5.1)。修复法师缠线卡死、联机结束提示及受邀端角色/弹道回拉。结束旧对局，重新导入并发送新版 HTML；旧附件不会自动升级。消息积压后的恢复还需要双方使用包含相应修复的桌宠测试版，HTML 不包含宿主更新。
+
+Latest: [v0.5.1 download and release notes](https://github.com/ShunyuYao/pet-brawl/releases/tag/v0.5.1). Fixes the mage side-special freeze, ended-session messaging, and guest-side remote fighter/projectile rewinds. Reimport and resend the new HTML after ending the old match. Recovery from queued network messages also requires the corresponding host fix on both peers, available through the invited testing channel; this HTML does not update the host.
+
 ## 玩法
 
 - 被打会累积**伤害百分比**，百分比越高被打得越远，飞出场外就少一条命。每人 3 条命，默认限时 8 分钟（可选 5 / 12）。时间到比剩余命数，再比百分比，仍平手进入 300% 决胜局。
@@ -62,11 +66,13 @@ A single-file HTML platform fighter for the 吐梨邦 desktop pet. Opened inside
 
 房主权威：房主运行规则（`game/room.cjs`、`game/match.cjs`，固定 60 帧/秒），客人只发操作；「按了一下」的动作用累计计数器发送，不会因为只保留最新一条而丢键。客人本地预测自己的动作并向房主结果收敛。使用宿主 `pet.sessions`（协议 `pet-brawl` v1，2 人）。
 
+客端显示其他玩家及其弹道时，按房主帧时间平滑呈现，避免本地输入确认造成远端反复跳回；自己操作的预测与房主战斗判定保持独立。已发送的旧 HTML 不会自动替换，需重新发送新的 `dist/桌宠大乱斗.html` 才使用修复版。调查与证据见 [联机运动呈现审计](docs/SMOOTHNESS-DELIVERY.md)。
+
 ## 开发
 
 ```sh
 npm run build          # esbuild 打包成单个内联脚本（可用 PET_BRAWL_ESBUILD 指定 esbuild 路径）
-npm run test:rules     # 规则、招式、姿势、完整对局、地图与联机协议（Node，344 条）
+npm run test:rules     # 规则、招式、姿势、完整对局、地图与联机协议 344 条，加运动回归 11 条
 npm run test:poses     # 八流派四向必杀的姿势与网络快照回归
 npm run test:stability # 192 场全流派/地图组合，逐帧姿势及吞吐投射物
 npm run test:net       # 联机协议、断线恢复、结束状态
@@ -76,6 +82,8 @@ npm run balance        # 高手电脑八个流派两两对打，每组 200 局�
 npm run test:browser   # 隐藏 Electron 打开最终 HTML，CDP 真实键盘
 npm run test:host      # 两个真实桌宠宿主实例的局域网 E2E（需要宿主源码与本地角色包）
 npm run test:host:freeze # 法师缠线的双宿主局域网专项（已包含在 test:host）
+npm run test:motion     # 实际网络回放、弹道、暂停与移动平台边界（已包含在 test:rules）
+npm run test:host:smoothness # 双宿主实际绘制轨迹、反向帧与抖动（已包含在 test:host）
 ```
 
 浏览器与宿主 E2E 需要本地角色包夹具（带实时布偶数据的 `rat-doll-*.zip`，不随仓库发布）：用 `BRAWL_DOLL_ZIP`、`BRAWL_IMAGE`、`BRAWL_PACKS_DIR`、`BRAWL_HOST_ROOT` 指定。
