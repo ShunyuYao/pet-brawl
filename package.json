@@ -7,10 +7,13 @@
   "scripts": {
     "build": "node scripts/build.cjs",
     "calibrate": "node tools/calibrate.cjs",
-    "test:rules": "node --test tests/rules.test.cjs tests/styles.test.cjs tests/styles2.test.cjs tests/stages.test.cjs tests/net.test.cjs",
+    "test:rules": "node --test tests/rules.test.cjs tests/styles.test.cjs tests/styles2.test.cjs tests/stages.test.cjs tests/net.test.cjs tests/poses.test.cjs",
+    "test:poses": "node --test tests/poses.test.cjs",
+    "test:freeze": "node tests/mage-freeze-e2e.cjs",
     "test:browser": "node tests/browser-e2e.cjs",
-    "test:host": "node tests/host-e2e.cjs",
-    "test": "npm run build && npm run test:rules && npm run test:browser",
+    "test:host": "node tests/host-e2e.cjs && npm run test:host:freeze",
+    "test:host:freeze": "BRAWL_FREEZE_ONLY=1 node tests/host-e2e.cjs",
+    "test": "npm run build && npm run test:rules && npm run test:freeze && npm run test:browser",
     "balance": "node tools/balance.cjs 200"
   },
   "engines": {

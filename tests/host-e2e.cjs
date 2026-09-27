@@ -21,7 +21,7 @@ const electron = require(path.join(HOST, 'demo/node_modules/electron'));
 const charIds = ['rat-doll-female', 'rat-doll-male'];
 const F = require(path.join(HOST, 'tests/helpers/lan-appearance-fixture'));
 const { activateButton, activateClosingButton } = require(path.join(HOST, 'tests/e2e/html-card-input'));
-const source = path.join(GAME, 'dist/桌宠大乱斗.html');
+const source = process.env.BRAWL_HTML || path.join(GAME, 'dist/桌宠大乱斗.html');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-plugin-appearance-peer-delivery-'));
 const runId = new Date().toISOString().replace(/[:.]/g, '-');
 const evidence = path.join(GAME, 'artifacts/host-e2e', runId);
@@ -190,6 +190,52 @@ async function importDoll(app){
   const ws=new WebSocket(app.game.webSocketDebuggerUrl);await new Promise(r=>ws.onopen=r);let n=0;const call=(method,params)=>new Promise((res,rej)=>{const id=++n;ws.addEventListener('message',function f(e){const m=JSON.parse(e.data);if(m.id===id){ws.removeEventListener('message',f);m.error?rej(Error(JSON.stringify(m.error))):res(m.result);}});ws.send(JSON.stringify({id,method,params}));});
   const {result}=await call('Runtime.evaluate',{expression:'document.querySelector("#import-file")'});await call('DOM.setFileInputFiles',{files:[file],objectId:result.objectId});ws.close();
 }
+async function mageFreezePlay(a,b){
+  await activateButton(a.game,'#lobby-style [data-value="grappler"]');
+  await activateButton(b.game,'#lobby-style [data-value="mage"]');
+  for(const app of [a,b])await wait(async()=>{const p=(await state(app)).view.players;return p[0]?.style==='grappler'&&p[1]?.style==='mage';},'grappler versus mage '+app.label);
+  await activateButton(a.game,'#ready');await activateButton(b.game,'#ready');
+  for(const app of [a,b]){
+    await wait(async()=>(await state(app)).match?.phase==='fight','freeze regression GO '+app.label,10000);
+    await wait(async()=>(await world(app)).fighters.length===2&&(await world(app)).fighters.every(f=>f.visible),'two painted fighters '+app.label);
+    await H.evalIn(app.game,'window.__freezeMoves=[];window.__freezeProjectiles=false;window.__freezeProbe=setInterval(()=>{const m=window.__brawl.state.match;if(m?.fighters[1].move)window.__freezeMoves.push(m.fighters[1].move);if(m?.projectiles>0)window.__freezeProjectiles=true;},10);true');
+  }
+  // Guest's actual input must reach the authoritative host; both render the mage.
+  await k(b.game,'KeyA');await H.sleep(100);await k(b.game,'KeyK');
+  await wait(async()=>['sideB'].includes((await fighters(a))[1].move),'host receives guest side special',4000);
+  // Request a natural compositor frame while the actual move is still active;
+  // an occluded macOS view may otherwise skip the whole short casting animation.
+  await Promise.all([a,b].map(async app=>{
+    await wait(async()=>(await fighters(app))[1].move==='sideB','active casting pose '+app.label,2000);
+    await H.cdp(app.game,'Page.captureScreenshot',{format:'png'});
+  }));
+  await k(b.game,'KeyK','keyUp');await k(b.game,'KeyA','keyUp');
+  await H.sleep(400);
+  const sample=app=>H.evalIn(app.game,'({raf:window.__rafCount,timer:document.querySelector("#timer").textContent,frame:window.__brawl.state.match.frame,moves:window.__freezeMoves,projectiles:window.__freezeProjectiles,world:window.__brawl.world()})');
+  const before=await Promise.all([a,b].map(sample));await H.sleep(1800);
+  const after=await Promise.all([a,b].map(sample));
+  report.freezeSamples={before,after};
+  for(let n=0;n<2;n++){
+    const app=[a,b][n],start=before[n],end=after[n];
+    const image=await H.cdp(app.game,'Page.captureScreenshot',{format:'png'});
+    const file=path.join(evidence,'mage-thread-'+app.label+'.png');fs.writeFileSync(file,Buffer.from(image.data,'base64'));report.screenshots.push(file);
+    assert(end.moves.includes('sideB'),'both peers observe the actual side special');
+    assert(end.projectiles,'both peers observe the projectile');
+    // This is a freeze assertion, not an FPS budget: two hidden 3D hosts can
+    // render slowly under load, but the broken frame loop never increments again.
+    assert(end.raf>start.raf,'rendering survives mage side special on '+app.label+' '+JSON.stringify({before:start.raf,after:end.raf}));
+    assert.notEqual(end.timer,start.timer,'visible timer advances on '+app.label);
+    assert.equal(end.world.fighters.length,2);assert(end.world.fighters.every(f=>f.visible));
+    check('mage thread keeps '+app.label+' rendering and counting down',{before:start,after:end});
+  }
+  assert.equal(report.exceptions.length,0,'no uncaught page exceptions');
+  const x=(await fighters(a))[1].x;await k(b.game,'KeyA');await H.sleep(300);await k(b.game,'KeyA','keyUp');
+  await wait(async()=>(await fighters(a))[1].x<x-1,'guest can still move after casting');
+  check('guest real keyboard still moves the authoritative fighter after casting');
+  await activateButton(b.game,'#leave');await wait(async()=>(await state(a)).connection==='closed','peer observes leave after casting');
+  check('leaving after the special explicitly ends the peer session');
+  for(const app of [a,b])await closeWork(app);
+}
 async function brawlPlay(a,b){
   // Both hosts read their current desktop pet; newer hosts hand over the 3D rag doll.
   const kinds={};
@@ -305,7 +351,9 @@ async function brawlPlay(a,b){
     const ap=await F.freePort(),bp=await F.freePort(),a=await boot('a',ap,bp),b=await boot('b',bp,ap);
     for(const app of [a,b])await installAppearances(app);
     await applyMain(a,'rat-doll-male');await applyMain(b,'rat-doll-female');
-    await sendGame(a,b);await approvals(a,b);await brawlPlay(a,b);
+    await sendGame(a,b);await approvals(a,b);
+    if(process.env.BRAWL_FREEZE_ONLY==='1')await mageFreezePlay(a,b);
+    else await brawlPlay(a,b);
   }catch(error){
     report.failures.push(error.message);report.error=error.stack;console.error(error);
     for(const app of apps){const list=await targets(app).catch(()=>[]);json(path.join(evidence,app.label+'-targets.json'),list.map(t=>({type:t.type,url:t.url,title:t.title})));

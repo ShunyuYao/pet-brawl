@@ -150,7 +150,12 @@ function poseMove(P,f,mo,t,style,REST){
       case 'dive':P.hammer.angle=style==='cat'?-0.9:-1.57;P.lean=style==='cat'?0.55:0;P.stretch=fr>=mv.dive.from?1.15:1;P.tuck=fr<mv.dive.from?0.6:0;break;
     }
     if(id==='koPunch'){P.crouch=kf(fr,[[0,0.6],[8,0.7],[10,0],[40,0]]);P.stretch=kf(fr,[[0,0.9],[9,0.9],[11,1.25],[30,1]]);P.fx.armor=fr>=8&&fr<=9&&f.ground!=null;P.fx.trail=fr>=9&&fr<=14?1:0;P.fx.charge=fr<9?1:0;}
-    if(/^sideB\d$/.test(id)||(id==='sideB'&&!type))P.lean=kf(fr,[[0,-0.05],[mv.hitboxes[0].frames[0],0.3],[mv.total,0]]);
+    if(/^sideB\d$/.test(id)||(id==='sideB'&&!type)){
+      // Projectile-only specials (mage thread) have no melee hitboxes. Their
+      // casting pose reaches forward when the projectile is released instead.
+      const strike=mv.hitboxes?.[0]?.frames?.[0]??mv.spawn?.frame;
+      if(Number.isFinite(strike))P.lean=kf(fr,[[0,-0.05],[strike,0.3],[mv.total,0]]);
+    }
     if(id==='downB'&&mv.spawn?.type==='trap'){P.crouch=0.6;P.hammer.angle=-1.2;}
     return;
   }
