@@ -6,7 +6,7 @@ const N=require('../game/net.cjs'),Solo=require('../game/solo.cjs'),I=require('.
 // poll long-waits, transfers are events. `cut()` silences one side (lost Wi-Fi).
 function pair({latency=15}={}){
   const sides={host:{events:[],cursor:0,waiter:null,assets:new Map(),mute:false},guest:{events:[],cursor:0,waiter:null,assets:new Map(),mute:false}};
-  let open=true;const joined={host:false,guest:false};const sent={host:[],guest:[]};
+  let open=true;const joined={host:false,guest:false};const sent={host:[],guest:[]};const epochs={host:1,guest:1};const transfers={host:0,guest:0};
   const push=(side,e)=>{side.events.push({cursor:++side.cursor,...e});side.waiter?.();};
   const other=r=>r==='host'?sides.guest:sides.host;
   const make=role=>{const me=sides[role];let seq=0;return {
@@ -15,12 +15,15 @@ function pair({latency=15}={}){
     send:async m=>{if(!open)throw Error('session_closed');if(JSON.stringify(m).length>60*1024)throw Error('invalid_request');sent[role].push({t:Date.now(),type:m.type});const s=++seq;
       if(!me.mute)setTimeout(()=>push(other(role),{type:'message',seq:s,message:JSON.parse(JSON.stringify(m))}),latency);return {status:'queued',seq:s};},
     poll:async({cursor=0,waitMs=0})=>{if(me.cursor<=cursor&&waitMs&&open)await new Promise(r=>{const t=setTimeout(r,waitMs);me.waiter=()=>{clearTimeout(t);me.waiter=null;r();};});
-      return {cursor:me.cursor,events:me.events.filter(e=>e.cursor>cursor),transportState:!open?'closed':joined.host&&joined.guest?'connected':'waiting',epoch:1};},
-    transfer:async t=>{const id=crypto.randomUUID();other(role).assets.set(id,{...t,transferId:id});setTimeout(()=>push(other(role),{type:'transfer',transferId:id,purpose:t.purpose}),latency);return {transferId:id,sha256:'0'.repeat(64),byteLength:1};},
+      return {cursor:me.cursor,events:me.events.filter(e=>e.cursor>cursor),transportState:!open?'closed':joined.host&&joined.guest?'connected':'waiting',epoch:epochs[role]};},
+    transfer:async t=>{transfers[role]++;const id=crypto.randomUUID();other(role).assets.set(id,{...t,transferId:id});setTimeout(()=>push(other(role),{type:'transfer',transferId:id,purpose:t.purpose}),latency);return {transferId:id,sha256:'0'.repeat(64),byteLength:1};},
     readTransfer:async({transferId})=>me.assets.get(transferId),
     leave:async()=>{open=false;push(sides.host,{type:'closed',reason:'peer_left'});push(sides.guest,{type:'closed',reason:'peer_left'});return {released:true,peerAcknowledged:true};},
   };};
-  return {host:make('host'),guest:make('guest'),cut:role=>{sides[role].mute=true;},heal:role=>{sides[role].mute=false;},sent};
+  // bounce(): the link drops and comes back — both sides see a new epoch, and the host bridge
+  // asks for a resync (demo/core/peer-session/manager.js does both on a reconnect).
+  const bounce=()=>{for(const r of ['host','guest']){epochs[r]++;push(sides[r],{type:'resync_required',reason:'reconnected'});push(sides[r],{type:'connected'});}};
+  return {host:make('host'),guest:make('guest'),cut:role=>{sides[role].mute=true;},heal:role=>{sides[role].mute=false;},sent,bounce,transfers};
 }
 const wait=async(fn,label,ms=8000)=>{const until=Date.now()+ms;while(Date.now()<until){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,15));}throw Error('timeout '+label);};
 const P=(name,sig)=>({name,signature:sig,kind:'sprite',color:'#ff0000'});
@@ -145,4 +148,38 @@ test('room view validation',()=>{
   const r=R.create();r.join(0,P('a','sig-a'));assert(R.validView(r.view(0)));
   assert(!R.validView({...r.view(0),settings:{timeLimit:5}}));
   assert.throws(()=>r.join(1,{name:'x',signature:'bad sig!',kind:'sprite'}),/invalid_profile/);
+});
+
+// Health check 2026-09-29 (vibe_contents/net-checkup, brawl reconnect-avatars): every reconnect
+// or resync re-sent the whole look; the host bridge keeps at most 8 MB of transfers per session,
+// so a few Wi-Fi hiccups with a 400 KB doll closed the match.
+test('reconnects never resend looks (the host bridge caps a session at 8 MB of transfers)',async()=>{
+  const L=await lobby();
+  await wait(()=>L.assets.h.length&&L.assets.g.length,'looks exchanged once');
+  const before={...L.sdk.transfers};assert.deepEqual(before,{host:1,guest:1});
+  for(let i=0;i<12;i++){L.sdk.bounce();await new Promise(r=>setTimeout(r,120));}
+  await new Promise(r=>setTimeout(r,1500));
+  assert.deepEqual(L.sdk.transfers,before,'12 reconnects: no look sent again');
+  assert.equal(L.assets.h.length,1);assert.equal(L.assets.g.length,1);
+  assert.deepEqual(L.errors,[]);
+});
+test('a changed look is still sent once after reconnects',async()=>{
+  const L=await lobby();
+  await wait(()=>L.assets.h.length&&L.assets.g.length,'looks exchanged once');
+  L.sdk.bounce();await new Promise(r=>setTimeout(r,300));
+  L.g.setProfile(P('客人','sig-g2'),{kind:'sprite',image:'data:image/png;base64,CCCC'});
+  await wait(()=>L.assets.h.some(a=>a[1]==='sig-g2'),'the host receives the new look');
+  await new Promise(r=>setTimeout(r,800));
+  assert.equal(L.sdk.transfers.guest,2,'one more transfer, not more');
+});
+test('if the guest never got the host\'s look, its hello brings it again (once)',async()=>{
+  const sdk=pair();const real=sdk.host.transfer;let dropped=0;
+  // The first host → guest transfer "succeeds" but never arrives.
+  sdk.host.transfer=async t=>{if(!dropped){dropped++;return {transferId:crypto.randomUUID()};}return real(t);};
+  const views={h:null,g:null},assets={h:[],g:[]};
+  const h=N.create(sdk.host,{onView:v=>views.h=v,onAsset:(s,sig,a)=>assets.h.push([s,sig,a])}),g=N.create(sdk.guest,{onView:v=>views.g=v,onAsset:(s,sig,a)=>assets.g.push([s,sig,a])});live.push(h,g);
+  await h.start(P('房主','sig-h'),{kind:'sprite',image:'data:image/png;base64,AAAA'});await g.start(P('客人','sig-g'),{kind:'sprite',image:'data:image/png;base64,BBBB'});
+  await wait(()=>assets.g.some(a=>a[1]==='sig-h'),'the guest gets the host\'s look after all',14000);
+  await new Promise(r=>setTimeout(r,2500));
+  assert.equal(assets.g.filter(a=>a[1]==='sig-h').length,1,'resent once, not repeatedly');
 });

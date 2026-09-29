@@ -16,7 +16,12 @@ const decode=value=>{if(typeof value!=='string'||value.length>1400000)throw Erro
 
 function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()=>{},now=()=>Date.now(),pauseTimeoutMs}={}){
   let context=null,host=false,room=null,connection='waiting',closed=false,disposed=false,cursor=0,epoch=0;
-  let profile=null,asset=null,sentSignature='',transferJob=null,lastHeard=0,lastHello=0,serial=0,applied=0;
+  // Looks are sent once per signature. A reconnect or resync does NOT resend them: the peer keeps
+  // what it received, and the host bridge caps a session at 8 MB of transfers (health check
+  // 2026-09-29: resending on every reconnect closed the match after a few Wi-Fi hiccups).
+  // The only resend: the guest's hello says it lacks the host's look (at most twice).
+  let profile=null,asset=null,sentSignature='',sentAt=0,resends=0,transferJob=null,lastHeard=0,lastHello=0,serial=0,applied=0;
+  const received=new Set();
   let pad=I.create(),readySeq=0,readyWant=false,guestReadySeq=0,sendingView=false,sendingInput=false,lastInputSent=0,lastSentKey='';
   // Guest prediction state
   let view=null,pred=null,predMatchNo=-1,seq=0,history=[],lastViewAt=0;
@@ -35,7 +40,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     const signature=profile.signature,payload=encode({v:1,signature,asset});
     if(payload.length>Math.ceil(1024*1024/3)*4){fail(Error('asset_too_large'));sentSignature=signature;return;}
     transferJob=sdk.transfer({purpose:PURPOSE,contentType:'application/octet-stream',dataBase64:payload})
-      .then(()=>{sentSignature=signature;}).catch(fail).finally(()=>{transferJob=null;});
+      .then(()=>{sentSignature=signature;sentAt=now();}).catch(fail).finally(()=>{transferJob=null;});
   }
   // ---------- host ----------
   let hostLast=0,hostAcc=0;
@@ -83,25 +88,30 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     if(!force&&now()-lastInputSent<34)return; // stay under 30 calls/s; the 25 Hz timer sends the rest
     sendingInput=true;
     try{
-      if(profile&&now()-lastHello>1000){lastHello=now();await send('brawl.hello',{profile},'hello');}
+      if(profile&&now()-lastHello>1000){lastHello=now();await send('brawl.hello',{profile,have:[...received].slice(-4)},'hello');}
       pad.seq=seq;lastSentKey=key;lastInputSent=now();
       await send('brawl.input',{input:I.clone(pad),readySeq,ready:readyWant},'input');
     }catch(e){if(!/backpressure/.test(e.message))fail(e);}finally{sendingInput=false;}
   }
   async function event(e){
     if(e.type==='closed'){end(e.reason||'peer_left');return;}
-    if(e.type==='resync_required'){sentSignature='';return;}
+    if(e.type==='resync_required')return; // messages only; looks already delivered stay delivered
     if(e.type==='transfer'&&e.purpose===PURPOSE){
       const data=await sdk.readTransfer({transferId:e.transferId});
       if(data.purpose!==PURPOSE||data.contentType!=='application/octet-stream')throw Error('invalid_profile');
       const value=decode(data.dataBase64);if(!value||value.v!==1||typeof value.signature!=='string')throw Error('invalid_profile');
-      lastHeard=now();onAsset(host?1:0,value.signature,value.asset);return;
+      lastHeard=now();received.add(value.signature);onAsset(host?1:0,value.signature,value.asset);return;
     }
     if(e.type!=='message')return;
     const {type,payload:p}=e.message;lastHeard=now();
     if(host){
       // The host only ever accepts a profile and controller input from the guest.
-      if(type==='brawl.hello'){room.join(1,p?.profile);return;}
+      if(type==='brawl.hello'){
+        room.join(1,p?.profile);
+        const have=Array.isArray(p?.have)?p.have:null;
+        if(have&&profile&&sentSignature===profile.signature&&!transferJob&&!have.includes(profile.signature)&&now()-sentAt>8000&&resends<2){resends++;sentSignature='';}
+        return;
+      }
       if(type==='brawl.input'&&p&&typeof p==='object'){
         if(!room.seat(1))return;
         room.input(1,p.input);
@@ -119,7 +129,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
       try{
         const b=await sdk.poll({cursor,waitMs:1000});if(disposed||closed)break;
         if(b.transportState==='closed'){for(const e of b.events)if(e.type==='closed'){end(e.reason);break;}end();break;}
-        if(b.epoch!==epoch){epoch=b.epoch;sentSignature='';}
+        if(b.epoch!==epoch)epoch=b.epoch; // a reconnect: looks are not resent (see upload)
         status(b.transportState);if(b.transportState==='connected'&&b.events.length)lastHeard=now();
         for(const e of b.events){try{await event(e);}catch(err){fail(err);}}cursor=b.cursor;
       }catch(e){if(/session_closed|caller_disposed|permission_denied|permission_revoked|account_changed/.test(e.message)){end(e.message);break;}status('reconnecting');fail(e);await pause(350);}
@@ -148,7 +158,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     // Local prediction stays immediate and retains its full collision world.
     present:()=>room?room.room.match:remoteMotion.sample(pred,now(),closed),
     hostStale:()=>!host&&!closed&&!disposed&&!!view&&(connection!=='connected'||now()-lastViewAt>STALE_MS),
-    setProfile(p,a){profile=R.validateProfile(p);asset=a||null;sentSignature='';lastHello=0;if(room)room.join(0,profile);},
+    setProfile(p,a){profile=R.validateProfile(p);asset=a||null;sentSignature='';resends=0;lastHello=0;if(room)room.join(0,profile);},
     setInput(v){if(room)room.input(0,v);else{pad=I.normalize(v,pad);pad.seq=seq;void guestSend();}},
     ready(value){if(closed)throw Error('session_closed');if(room)room.ready(0,value);else{readySeq++;readyWant=!!value;lastHello=0;void guestSend(true);}},
     setTime(sec){if(!room)throw Error('host_only');room.setTime(sec);},

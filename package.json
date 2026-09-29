@@ -1,6 +1,6 @@
 {
   "name": "pet-brawl",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "license": "MIT",
   "description": "桌宠大乱斗：带上桌宠形象的双人平台格斗单文件 HTML，8 个流派、3 张地图，支持局域网双人与单人对战电脑",
