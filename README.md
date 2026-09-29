@@ -7,9 +7,9 @@ A single-file HTML platform fighter for the 吐梨邦 desktop pet. Opened inside
 交付文件：[`dist/桌宠大乱斗.html`](dist/桌宠大乱斗.html)（约 840 KB，three.js、cannon-es 与全部代码内联，无 CDN、无服务器）。
 完整规则、招式表与平衡记录：[docs/SPEC.zh-CN.md](docs/SPEC.zh-CN.md)。
 
-最新版：[v0.5.1 下载与更新说明](https://github.com/ShunyuYao/pet-brawl/releases/tag/v0.5.1)。修复法师缠线卡死、联机结束提示及受邀端角色/弹道回拉。结束旧对局，重新导入并发送新版 HTML；旧附件不会自动升级。消息积压后的恢复还需要双方使用包含相应修复的桌宠测试版，HTML 不包含宿主更新。
+最新版：[v0.5.2 下载与更新说明](https://github.com/ShunyuYao/pet-brawl/releases/tag/v0.5.2)。修复断线重连后反复重传形象、几次 Wi-Fi 抖动后被踢出对局的问题。结束旧对局，重新导入并发送新版 HTML；旧附件不会自动升级。
 
-Latest: [v0.5.1 download and release notes](https://github.com/ShunyuYao/pet-brawl/releases/tag/v0.5.1). Fixes the mage side-special freeze, ended-session messaging, and guest-side remote fighter/projectile rewinds. Reimport and resend the new HTML after ending the old match. Recovery from queued network messages also requires the corresponding host fix on both peers, available through the invited testing channel; this HTML does not update the host.
+Latest: [v0.5.2 download and release notes](https://github.com/ShunyuYao/pet-brawl/releases/tag/v0.5.2). Reconnects no longer resend the whole look, which closed the match after a few Wi-Fi hiccups. Reimport and resend the new HTML after ending the old match.
 
 ## 玩法
 
