@@ -10,7 +10,7 @@ function pair({latency=15}={}){
   const push=(side,e)=>{side.events.push({cursor:++side.cursor,...e});side.waiter?.();};
   const other=r=>r==='host'?sides.guest:sides.host;
   const make=role=>{const me=sides[role];let seq=0;return {
-    getContext:async()=>({invitationId:'00000000-0000-4000-8000-000000000001',artifactHash:'a'.repeat(64),protocol:{id:'pet-brawl',version:1},role,peer:{sessionPeerId:'p',displayName:'peer'},expiresAt:Date.now()+1e6}),
+    getContext:async()=>({invitationId:'00000000-0000-4000-8000-000000000001',artifactHash:'a'.repeat(64),protocol:N.PROTOCOL,role,peer:{sessionPeerId:'p',displayName:'peer'},expiresAt:Date.now()+1e6}),
     join:async()=>{joined[role]=true;if(joined.host&&joined.guest){push(sides.host,{type:'connected'});push(sides.guest,{type:'connected'});}return {status:joined.host&&joined.guest?'connected':'waiting',epoch:1,limits:{},peerStatus:'online'};},
     send:async m=>{if(!open)throw Error('session_closed');if(JSON.stringify(m).length>60*1024)throw Error('invalid_request');sent[role].push({t:Date.now(),type:m.type});const s=++seq;
       if(!me.mute)setTimeout(()=>push(other(role),{type:'message',seq:s,message:JSON.parse(JSON.stringify(m))}),latency);return {status:'queued',seq:s};},
@@ -98,7 +98,10 @@ test('forged data: host ignores guest views and damage fields; guest rejects inv
   assert.equal(L.h.live().fighters[0].percent,0,'host fighter percent untouched');
   assert.equal(L.h.live().fighters[0].stocks,3);assert.equal(L.h.live().fighters[1].percent,before);
   assert([-1,0,1].includes(L.h.live().inputs[1].x),'direction clamped');
-  await L.sdk.host.send({type:'brawl.view',payload:{serial:2e9,view:{...L.views.g,match:{...L.views.g.match,fighters:[{x:'nan'}]}}},lane:'latest',key:'forged'});
+  const forgedWire=require('../game/state-wire.cjs').create();
+  for(let n=1;n<L.g.diagnostics().stateWire.receiver.generation;n++)forgedWire.reset();
+  const forged=await forgedWire.encode({serial:2e9,view:{...L.views.g,match:{...L.views.g.match,fighters:[{x:'nan'}]}}});
+  await L.sdk.host.send({type:'brawl.view',payload:forged.envelope,lane:'latest',key:'forged'});
   await wait(()=>L.errors.includes('invalid_view'),'forged view rejected');
   L.h.dispose();L.g.dispose();
 });

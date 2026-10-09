@@ -1,5 +1,5 @@
 'use strict';
-// LAN session adapter over the host's `pet.sessions` bridge (HTML work, experimental).
+// Invitation session adapter over the host's `pet.sessions` bridge (HTML work, experimental).
 // Host = seat 0 and runs the authoritative room; guest = seat 1 sends inputs only
 // (SPEC §10). The guest predicts locally: on every host snapshot it rewinds to the
 // snapshot and replays its own inputs the host has not acknowledged yet.
@@ -7,8 +7,9 @@
 // ≤ 60 KB per message, ≤ 8 latest keys; transfers ≤ 1 MB each, one at a time.
 const R=require('./room.cjs'),M=require('./match.cjs'),I=require('./input.cjs');
 const RemoteMotion=require('./remote-motion.cjs');
+const StateWire=require('./state-wire.cjs');
 
-const PROTOCOL={id:'pet-brawl',version:1},PURPOSE='brawl.profile.v1';
+const PROTOCOL=Object.freeze({id:'pet-brawl',version:2}),PURPOSE='brawl.profile.v1';
 const VIEW_MS=40,INPUT_MS=40,SIM_MS=1000/60,STALE_MS=1500;
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const encode=value=>{const b=new TextEncoder().encode(JSON.stringify(value));let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode(...b.subarray(i,i+8192));return btoa(s);};
@@ -25,13 +26,13 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
   let pad=I.create(),readySeq=0,readyWant=false,guestReadySeq=0,sendingView=false,sendingInput=false,lastInputSent=0,lastSentKey='';
   // Guest prediction state
   let view=null,pred=null,predMatchNo=-1,seq=0,history=[],lastViewAt=0;
-  const remoteMotion=RemoteMotion.create();
+  const remoteMotion=RemoteMotion.create(),stateWire=StateWire.create({now});
   const timers=[];
   const fail=e=>onError(e instanceof Error?e:Error(String(e)));
   const status=s=>{if(connection!==s){connection=s;onConnection(s);}};
   const send=(type,payload,key)=>closed||disposed?Promise.reject(Error('session_closed')):sdk.send({type,payload,lane:'latest',key});
   function end(reason='peer_left'){
-    if(closed)return;closed=true;timers.forEach(clearInterval);status('closed');
+    if(closed)return;closed=true;stateWire.close();timers.forEach(clearInterval);status('closed');
     if(room){room.room.notice=reason;onView(room.view(0));}
     else if(view){view={...view,notice:reason};onView(view);}
   }
@@ -60,7 +61,11 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     // The host's own screen reads the room directly; refresh its lobby view ~10×/s.
     if(now()-lastLocalView>=100){lastLocalView=now();onView(room.view(0));}
     if(connection!=='connected'||sendingView||closed)return;sendingView=true;
-    try{await send('brawl.view',{serial:++serial,view:room.view(1)},'view');}catch(e){if(!/backpressure/.test(e.message))fail(e);}finally{sendingView=false;}
+    try{
+      const prepared=await stateWire.encode({serial:++serial,view:room.view(1)});
+      if(!stateWire.current(prepared)||closed||disposed)return;
+      await send('brawl.view',prepared.envelope,'view');stateWire.sent(prepared);
+    }catch(e){if(!/backpressure/.test(e.message))fail(e);}finally{sendingView=false;}
   }
   // ---------- guest ----------
   let guestLast=0,guestAcc=0;
@@ -90,12 +95,12 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     try{
       if(profile&&now()-lastHello>1000){lastHello=now();await send('brawl.hello',{profile,have:[...received].slice(-4)},'hello');}
       pad.seq=seq;lastSentKey=key;lastInputSent=now();
-      await send('brawl.input',{input:I.clone(pad),readySeq,ready:readyWant},'input');
+      await send('brawl.input',{input:I.clone(pad),readySeq,ready:readyWant,stateAck:stateWire.feedback()},'input');
     }catch(e){if(!/backpressure/.test(e.message))fail(e);}finally{sendingInput=false;}
   }
   async function event(e){
     if(e.type==='closed'){end(e.reason||'peer_left');return;}
-    if(e.type==='resync_required')return; // messages only; looks already delivered stay delivered
+    if(e.type==='resync_required'){stateWire.resync();return;} // State reset never resends delivered looks.
     if(e.type==='transfer'&&e.purpose===PURPOSE){
       const data=await sdk.readTransfer({transferId:e.transferId});
       if(data.purpose!==PURPOSE||data.contentType!=='application/octet-stream')throw Error('invalid_profile');
@@ -113,6 +118,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
         return;
       }
       if(type==='brawl.input'&&p&&typeof p==='object'){
+        stateWire.acknowledge(p.stateAck);
         if(!room.seat(1))return;
         room.input(1,p.input);
         const s=Number(p.input?.seq);if(Number.isSafeInteger(s)&&s>room.room.ack)room.room.ack=s;
@@ -120,16 +126,20 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
       }
       return;
     }
-    if(type!=='brawl.view'||!p||!Number.isSafeInteger(p.serial)||p.serial<=applied)return;
-    if(!R.validView(p.view)||p.view.you!==1)throw Error('invalid_view');
-    applied=p.serial;view=p.view;lastViewAt=now();remoteMotion.push(view,lastViewAt);reconcile(view);onView(view);
+    if(type!=='brawl.view')return;
+    await stateWire.decode(p,decoded=>{
+      if(closed||disposed)throw Error('session_closed');
+      if(!R.validView(decoded.view)||decoded.view.you!==1||decoded.serial<=applied)throw Error('invalid_view');
+      // Successful reconstruction and game application precede the feedback ACK.
+      reconcile(decoded.view);view=decoded.view;lastViewAt=now();remoteMotion.push(view,lastViewAt);onView(view);applied=decoded.serial;
+    });
   }
   async function poll(){
     while(!disposed&&!closed){
       try{
         const b=await sdk.poll({cursor,waitMs:1000});if(disposed||closed)break;
         if(b.transportState==='closed'){for(const e of b.events)if(e.type==='closed'){end(e.reason);break;}end();break;}
-        if(b.epoch!==epoch)epoch=b.epoch; // a reconnect: looks are not resent (see upload)
+        if(b.epoch!==epoch){epoch=b.epoch;stateWire.reset();} // Reconnect resets bases, never looks.
         status(b.transportState);if(b.transportState==='connected'&&b.events.length)lastHeard=now();
         for(const e of b.events){try{await event(e);}catch(err){fail(err);}}cursor=b.cursor;
       }catch(e){if(/session_closed|caller_disposed|permission_denied|permission_revoked|account_changed/.test(e.message)){end(e.message);break;}status('reconnecting');fail(e);await pause(350);}
@@ -164,8 +174,8 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     setTime(sec){if(!room)throw Error('host_only');room.setTime(sec);},
     setStage(id){if(!room)throw Error('host_only');room.setStage(id);},
     async leave(){try{await sdk.leave();}finally{end('peer_left');}},
-    dispose(){disposed=true;timers.forEach(clearInterval);},
-    diagnostics:()=>({role:context?.role,connection,closed,serial,applied,seq,ack:view?.ack??room?.room.ack,history:history.length,profile:profile?.signature,sentSignature}),
+    dispose(){disposed=true;stateWire.close();timers.forEach(clearInterval);},
+    diagnostics:()=>({role:context?.role,connection,closed,serial,applied,seq,ack:view?.ack??room?.room.ack,history:history.length,profile:profile?.signature,sentSignature,stateWire:stateWire.diagnostics()}),
   };
 }
 module.exports={create,PROTOCOL,PURPOSE,STALE_MS};

@@ -5,15 +5,19 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),{cre
 const root=path.resolve(__dirname,'../..'),M=require('../../game/match.cjs'),I=require('../../game/input.cjs');
 async function replay({batched=false,projectiles=false,source=process.env.BRAWL_BASELINE_NET}={}){
  let clock=1000,waiter=null,cursor=0,ack=0,serial=0;const timers=[],packets=[],acks=[],errors=[];
- const sdk={getContext:async()=>({role:'guest',protocol:{id:'pet-brawl',version:1}}),join:async()=>({status:'connected',epoch:1}),
-  poll:()=>new Promise(r=>{waiter=r;}),send:async m=>{if(m.type==='brawl.input')acks.push({at:clock+20,seq:m.payload.input.seq});},leave:async()=>({})};
+ const wire=require('../../game/state-wire.cjs').create({now:()=>clock});
+ const sdk={getContext:async()=>({role:'guest',protocol:module.exports.PROTOCOL}),join:async()=>({status:'connected',epoch:1}),
+  poll:()=>new Promise(r=>{waiter=r;}),send:async m=>{if(m.type==='brawl.input'){acks.push({at:clock+20,seq:m.payload.input.seq});if(m.payload.stateAck)wire.acknowledge(m.payload.stateAck);}},leave:async()=>({})};
  const module={exports:{}},box={module,require:createRequire(path.join(root,'game/net.cjs')),Date,Promise,TextEncoder,TextDecoder,Uint8Array,btoa,atob,setTimeout,clearTimeout,
   setInterval(fn,ms){const t={fn,ms,next:clock+ms};timers.push(t);return t;},clearInterval(t){t.off=true;}};
  vm.runInNewContext(fs.readFileSync(source||path.join(root,'game/net.cjs'),'utf8'),box,{filename:'actual-net.cjs'});
  const n=module.exports.create(sdk,{now:()=>clock,onError:e=>errors.push(e.message)});
  await n.start({name:'Guest',signature:'guest',kind:'toy',color:'#ff0000'});
  const m=M.create({countdown:false,stage:'moon',styles:[projectiles?'mage':'hammer','hammer']});M.place(m,0,{x:-55});M.place(m,1,{x:75});const hostPad=I.create();
- const rows=[],flush=async()=>{for(let j=0;j<8;j++)await Promise.resolve();};
+ const rows=[],flush=async(expected)=>{
+  if(expected!==undefined&&module.exports.PROTOCOL.version===2){const until=Date.now()+3000;while(n.diagnostics().applied<expected&&!errors.length&&Date.now()<until)await new Promise(r=>setImmediate(r));if(n.diagnostics().applied<expected&&!errors.length)throw Error('wire_decode_timeout');}
+  for(let j=0;j<8;j++)await Promise.resolve();
+ };
  for(let step=0;step<720;step++){
   clock=1000+step*1000/60;
   while(acks.length&&acks[0].at<=clock)ack=acks.shift().seq;
@@ -21,7 +25,11 @@ async function replay({batched=false,projectiles=false,source=process.env.BRAWL_
   if(projectiles){if(cycle===0)I.press(hostPad,'special');}else hostPad.x=dir;
   M.setInput(m,0,hostPad);M.step(m);
   if(step%3===0){const arrival=batched?Math.ceil((clock+20)/200)*200:clock+20;packets.push({at:arrival,view:{v:1,you:1,solo:false,phase:'match',settings:{timeLimit:480,stocks:3,stage:'moon'},matchNo:1,notice:'',ack,pause:null,players:[],match:M.snapshot(m)}});}
-  if(waiter){const due=packets.filter(p=>p.at<=clock);if(due.length){packets.splice(0,due.length);const r=waiter;waiter=null;r({cursor:++cursor,epoch:1,transportState:'connected',events:due.map(p=>({type:'message',message:{type:'brawl.view',payload:{serial:++serial,view:p.view}}}))});await flush();}}
+  if(waiter){const due=packets.filter(p=>p.at<=clock);if(due.length){
+   packets.splice(0,due.length);const events=[];
+   for(const p of due){let payload={serial:++serial,view:p.view};if(module.exports.PROTOCOL.version===2){const prepared=await wire.encode(payload);wire.sent(prepared);payload=prepared.envelope;}events.push({type:'message',message:{type:'brawl.view',payload}});}
+   const r=waiter;waiter=null;r({cursor:++cursor,epoch:1,transportState:'connected',events});await flush(serial);
+  }}
   for(const t of timers)if(!t.off&&clock+1e-6>=t.next){t.next+=t.ms;await t.fn();await flush();}
   const shown=n.present?n.present():n.live();if(shown)rows.push({t:clock,x:shown.fighters[0].x,truth:m.fighters[0].x,dir,cycle,projectiles:shown.projectiles.map(p=>({id:p.id,x:p.x,vx:p.vx,age:p.age}))});
  }
