@@ -10,8 +10,8 @@ for(const batched of [false,true])test('real mage shots do not rewind with guest
  assert(stats.reverseRatio<.01,JSON.stringify(stats));assert(stats.p95SpeedRatio<1.6,JSON.stringify(stats));
 });
 test('the complete walking trajectory includes turns with bounded presentation delay and error',async()=>{
- for(const batched of [false,true]){const {rows}=await replay({batched}),lag=batched?12:11;let sum=0,max=0,count=0;
-  // These arrivals quantize 20ms transit to the next 60Hz frame; batching adds
+ for(const batched of [false,true]){const {rows}=await replay({batched,delayMs:150}),lag=batched?12:11;let sum=0,max=0,count=0;
+  // This fixed 150ms reference quantizes 20ms transit to the next 60Hz frame; batching adds
   // one frame. Include every turn and acceleration, not only the steady samples.
   for(let i=30;i<rows.length;i++){const error=Math.abs(rows[i].x-rows[i-lag].truth);sum+=error*error;max=Math.max(max,error);count++;}
   assert(Math.sqrt(sum/count)<.3,'full trajectory RMS');assert(max<2,'turn error remains below two game units');
@@ -22,7 +22,7 @@ function view(frame,{matchNo=1,paused=false,phase='fight',x=frame,stocks=3,state
  return {matchNo,you:1,pause:paused?{reason:'peer_lost'}:null,match};
 }
 test('remote fighters and projectiles use host motion; own prediction and every source remain intact',()=>{
- const b=Motion.create(),a=view(0),v=view(3),pred=M.restore(v.match);
+ const b=Motion.create({delayMs:150}),a=view(0),v=view(3),pred=M.restore(v.match);
  a.match.projectiles=[{id:1,owner:0,x:0,y:10,vx:1,vy:0}];v.match.projectiles=[{id:1,owner:0,x:3,y:10,vx:1,vy:0}];
  pred.fighters[0].x=999;pred.fighters[1].x=111;pred.projectiles=[{id:1,owner:0,x:999,y:10},{id:2,owner:1,x:222,y:10}];
  const before=JSON.stringify([a,v,pred]);b.push(a,20);b.push(v,70);const shown=b.sample(pred,200);

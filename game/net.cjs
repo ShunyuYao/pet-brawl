@@ -2,12 +2,13 @@
 // Invitation session adapter over the host's `pet.sessions` bridge (HTML work, experimental).
 // Host = seat 0 and runs the authoritative room; guest = seat 1 sends inputs only
 // (SPEC §10). The guest predicts locally: on every host snapshot it rewinds to the
-// snapshot and replays its own inputs the host has not acknowledged yet.
+// snapshot and replays its own frame-indexed inputs to the prediction target.
 // Limits honoured (demo/core/peer-session/contracts.js): latest lane ≤ 30 calls/s,
 // ≤ 60 KB per message, ≤ 8 latest keys; transfers ≤ 1 MB each, one at a time.
-const R=require('./room.cjs'),M=require('./match.cjs'),I=require('./input.cjs');
+const R=require('./room.cjs'),I=require('./input.cjs');
 const RemoteMotion=require('./remote-motion.cjs');
 const StateWire=require('./state-wire.cjs');
+const Prediction=require('./prediction.cjs');
 
 const PROTOCOL=Object.freeze({id:'pet-brawl',version:2}),PURPOSE='brawl.profile.v1';
 const VIEW_MS=40,INPUT_MS=40,SIM_MS=1000/60,STALE_MS=1500;
@@ -15,7 +16,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const encode=value=>{const b=new TextEncoder().encode(JSON.stringify(value));let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode(...b.subarray(i,i+8192));return btoa(s);};
 const decode=value=>{if(typeof value!=='string'||value.length>1400000)throw Error('invalid_profile');return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(value),c=>c.charCodeAt(0))));};
 
-function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()=>{},now=()=>Date.now(),pauseTimeoutMs}={}){
+function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()=>{},now=()=>Date.now(),pauseTimeoutMs,observation=null}={}){
   let context=null,host=false,room=null,connection='waiting',closed=false,disposed=false,cursor=0,epoch=0;
   // Looks are sent once per signature. A reconnect or resync does NOT resend them: the peer keeps
   // what it received, and the host bridge caps a session at 8 MB of transfers (health check
@@ -25,11 +26,12 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
   const received=new Set();
   let pad=I.create(),readySeq=0,readyWant=false,guestReadySeq=0,sendingView=false,sendingInput=false,lastInputSent=0,lastSentKey='';
   // Guest prediction state
-  let view=null,pred=null,predMatchNo=-1,seq=0,history=[],lastViewAt=0;
+  let view=null,pred=null,predMatchNo=-1,seq=0,lastViewAt=0,predictionReset=null;
+  const prediction=Prediction.create();
   const remoteMotion=RemoteMotion.create(),stateWire=StateWire.create({now});
   const timers=[];
   const fail=e=>onError(e instanceof Error?e:Error(String(e)));
-  const status=s=>{if(connection!==s){connection=s;onConnection(s);}};
+  const status=s=>{if(connection!==s){connection=s;onConnection(s);if(observation?.enabled)observation.network('state',{state:s,epoch});}};
   const send=(type,payload,key)=>closed||disposed?Promise.reject(Error('session_closed')):sdk.send({type,payload,lane:'latest',key});
   function end(reason='peer_left'){
     if(closed)return;closed=true;stateWire.close();timers.forEach(clearInterval);status('closed');
@@ -54,7 +56,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
       if(!online)room.pauseFor('peer_lost');else room.resume();
       room.checkPause();
     }
-    while(hostAcc>=SIM_MS){room.tick();hostAcc-=SIM_MS;}
+    while(hostAcc>=SIM_MS){const before=observation?.enabled?observation.beforeTick(room.room.matchNo,room.room.match):null;room.tick();if(observation?.enabled)observation.afterTick(before,room.room.matchNo,room.room.match);hostAcc-=SIM_MS;}
   }
   let lastLocalView=0;
   async function publish(){
@@ -62,9 +64,10 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     if(now()-lastLocalView>=100){lastLocalView=now();onView(room.view(0));}
     if(connection!=='connected'||sendingView||closed)return;sendingView=true;
     try{
-      const prepared=await stateWire.encode({serial:++serial,view:room.view(1)});
+      const snapshot=room.view(1),nextSerial=++serial;
+      const prepared=await stateWire.encode({serial:nextSerial,view:snapshot});
       if(!stateWire.current(prepared)||closed||disposed)return;
-      await send('brawl.view',prepared.envelope,'view');stateWire.sent(prepared);
+      await send('brawl.view',prepared.envelope,'view');stateWire.sent(prepared);if(observation?.enabled)observation.published(nextSerial,snapshot);
     }catch(e){if(!/backpressure/.test(e.message))fail(e);}finally{sendingView=false;}
   }
   // ---------- guest ----------
@@ -73,18 +76,13 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     const t=now();if(!guestLast)guestLast=t;guestAcc+=Math.min(500,t-guestLast);guestLast=t;
     while(guestAcc>=SIM_MS){
       guestAcc-=SIM_MS;
-      if(!pred||view?.pause||pred.phase==='results')continue;
-      pad.seq=++seq;history.push({seq,input:I.clone(pad)});if(history.length>240)history.shift();
-      M.setInput(pred,1,pad);M.step(pred);
+      if(!pred||view?.pause||pred.phase==='results'||predictionReset||connection!=='connected'||t-lastViewAt>STALE_MS)continue;
+      pad.seq=++seq;prediction.tick(pad);pred=prediction.live();
     }
   }
   function reconcile(v){
-    if(!v.match){pred=null;history=[];return;}
-    const base=M.restore(v.match);
-    if(v.matchNo!==predMatchNo){predMatchNo=v.matchNo;history=history.filter(h=>h.seq>v.ack);}
-    history=history.filter(h=>h.seq>v.ack);
-    if(!v.pause)for(const h of history){M.setInput(base,1,h.input);M.step(base);if(base.phase==='results')break;}
-    pred=base;
+    prediction.reconcile(v,{reset:predictionReset||(lastViewAt&&now()-lastViewAt>STALE_MS?'stale':null)});
+    predictionReset=null;pred=prediction.live();predMatchNo=v.matchNo;
   }
   async function guestSend(force=false){
     if(connection!=='connected'||sendingInput||closed)return;
@@ -100,7 +98,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
   }
   async function event(e){
     if(e.type==='closed'){end(e.reason||'peer_left');return;}
-    if(e.type==='resync_required'){stateWire.resync();return;} // State reset never resends delivered looks.
+    if(e.type==='resync_required'){stateWire.resync();if(observation?.enabled)observation.network('reset',{reason:e.reason||'resync_required',epoch});return;} // State reset never resends delivered looks.
     if(e.type==='transfer'&&e.purpose===PURPOSE){
       const data=await sdk.readTransfer({transferId:e.transferId});
       if(data.purpose!==PURPOSE||data.contentType!=='application/octet-stream')throw Error('invalid_profile');
@@ -131,7 +129,9 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
       if(closed||disposed)throw Error('session_closed');
       if(!R.validView(decoded.view)||decoded.view.you!==1||decoded.serial<=applied)throw Error('invalid_view');
       // Successful reconstruction and game application precede the feedback ACK.
-      reconcile(decoded.view);view=decoded.view;lastViewAt=now();remoteMotion.push(view,lastViewAt);onView(view);applied=decoded.serial;
+      const previous=pred,previousMatchNo=predMatchNo;
+      reconcile(decoded.view);view=decoded.view;lastViewAt=now();remoteMotion.push(view,lastViewAt,decoded.serial);onView(view);applied=decoded.serial;
+      if(observation?.enabled)observation.applied({serial:decoded.serial,view,previous,pred,previousMatchNo,predictionReset:prediction.diagnostics().predictionReset});
     });
   }
   async function poll(){
@@ -139,7 +139,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
       try{
         const b=await sdk.poll({cursor,waitMs:1000});if(disposed||closed)break;
         if(b.transportState==='closed'){for(const e of b.events)if(e.type==='closed'){end(e.reason);break;}end();break;}
-        if(b.epoch!==epoch){epoch=b.epoch;stateWire.reset();} // Reconnect resets bases, never looks.
+        if(b.epoch!==epoch){epoch=b.epoch;stateWire.reset();predictionReset='epoch';if(observation?.enabled)observation.network('reset',{reason:'epoch',epoch});} // Reconnect resets bases, never looks.
         status(b.transportState);if(b.transportState==='connected'&&b.events.length)lastHeard=now();
         for(const e of b.events){try{await event(e);}catch(err){fail(err);}}cursor=b.cursor;
       }catch(e){if(/session_closed|caller_disposed|permission_denied|permission_revoked|account_changed/.test(e.message)){end(e.message);break;}status('reconnecting');fail(e);await pause(350);}
@@ -166,7 +166,10 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     live:()=>room?room.room.match:pred,
     // Drawing the remote peer must not rewind when our input ack advances.
     // Local prediction stays immediate and retains its full collision world.
-    present:()=>room?room.room.match:remoteMotion.sample(pred,now(),closed),
+    present:()=>{
+      if(room){if(observation?.enabled)observation.presentation({mode:'authority-live',localSeat:0});return room.room.match;}
+      return remoteMotion.sample(pred,now(),closed,observation?.enabled?value=>observation.presentation(value):null);
+    },
     hostStale:()=>!host&&!closed&&!disposed&&!!view&&(connection!=='connected'||now()-lastViewAt>STALE_MS),
     setProfile(p,a){profile=R.validateProfile(p);asset=a||null;sentSignature='';resends=0;lastHello=0;if(room)room.join(0,profile);},
     setInput(v){if(room)room.input(0,v);else{pad=I.normalize(v,pad);pad.seq=seq;void guestSend();}},
@@ -175,7 +178,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     setStage(id){if(!room)throw Error('host_only');room.setStage(id);},
     async leave(){try{await sdk.leave();}finally{end('peer_left');}},
     dispose(){disposed=true;stateWire.close();timers.forEach(clearInterval);},
-    diagnostics:()=>({role:context?.role,connection,closed,serial,applied,seq,ack:view?.ack??room?.room.ack,history:history.length,profile:profile?.signature,sentSignature,stateWire:stateWire.diagnostics()}),
+    diagnostics:()=>({role:context?.role,connection,closed,serial,applied,seq,ack:view?.ack??room?.room.ack,...prediction.diagnostics(),profile:profile?.signature,sentSignature,stateWire:stateWire.diagnostics()}),
   };
 }
 module.exports={create,PROTOCOL,PURPOSE,STALE_MS};

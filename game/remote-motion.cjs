@@ -6,7 +6,7 @@ const St=require('./stage.cjs');
 function create({delayMs=150,maxProjectionMs=100}={}){
  let frames=[],identity=null,offset=null,lastTime=-Infinity,lastReceived=-Infinity;
  function reset(){frames=[];offset=null;lastTime=-Infinity;lastReceived=-Infinity;}
- function push(view,receivedAt){
+ function push(view,receivedAt,serial=null){
   const m=view?.match;if(!m){reset();identity=null;return;}
   const key=[view.matchNo,m.stage,m.phase,view.you,!!view.pause||!!m.paused].join(':');
   if(key!==identity){reset();identity=key;}
@@ -14,10 +14,10 @@ function create({delayMs=150,maxProjectionMs=100}={}){
   if(frames.length&&t<=frames.at(-1).t)return;
   if(receivedAt-lastReceived>1000)reset();
   lastReceived=receivedAt;offset=Math.min(offset??Infinity,receivedAt-t);
-  frames.push({t,match:m,paused:!!view.pause||!!m.paused,you:view.you});if(frames.length>32)frames.shift();
+  frames.push({t,match:m,paused:!!view.pause||!!m.paused,you:view.you,serial});if(frames.length>32)frames.shift();
  }
- function sample(pred,now,stopped=false){
-  if(!pred||!frames.length)return pred;
+ function sample(pred,now,stopped=false,onSample=null){
+  if(!pred||!frames.length){if(onSample)try{onSample({mode:'unavailable',localSeat:null,fighters:[]});}catch{}return pred;}
   const first=frames[0],last=frames.at(-1);let a=last,b=last,f=1;
   if(!stopped&&!last.paused&&['fight','sudden'].includes(last.match.phase)&&frames.length>1){
    const t=Math.max(lastTime,now-offset-delayMs);lastTime=t;
@@ -27,6 +27,7 @@ function create({delayMs=150,maxProjectionMs=100}={}){
     f=(Math.min(t,b.t+maxProjectionMs)-a.t)/(b.t-a.t);
    }
   }
+  const provenance=onSample?[]:null;
   function position(before,after,isFighter){
    let k={...after},blend=false;
    if(before&&a!==b){
@@ -40,12 +41,15 @@ function create({delayMs=150,maxProjectionMs=100}={}){
     const stage=St.get(pred.stage),sb=stage.surface(after.ground,b.match.frame),sn=stage.surface(after.ground,pred.frame);
     if(sb&&sn){const sa=blend&&before.ground===after.ground?stage.surface(after.ground,a.match.frame):null;
      const center=s=>(s.x0+s.x1)/2,oldX=sa?center(sa)+(center(sb)-center(sa))*f:center(sb),oldY=sa?sa.y+(sb.y-sa.y)*f:sb.y;
-     if(blend&&!sa){k.x=after.x;k.y=after.y;}k.x+=center(sn)-oldX;k.y+=sn.y-oldY;}
+     if(blend&&!sa){k.x=after.x;k.y=after.y;blend=false;}k.x+=center(sn)-oldX;k.y+=sn.y-oldY;}
    }
+   if(provenance&&isFighter)provenance.push({seat:after.seat,sourceMode:blend?(f>1?'remote-projection':'remote-interpolation'):'remote-snapshot'});
    return k;
   }
   const remote=new Map(b.match.fighters.filter(k=>k.seat!==last.you).map(k=>[k.seat,position(a.match.fighters.find(p=>p.seat===k.seat),k,true)]));
   const ownProjectiles=pred.projectiles.filter(p=>p.owner===last.you),ownIds=new Set(ownProjectiles.map(p=>p.id));
+  if(onSample)try{onSample({localSeat:last.you,mode:a===b?'snapshot':f>1?'projection':'interpolation',lowerSerial:a.serial,upperSerial:b.serial,lowerFrame:a.match.frame,upperFrame:b.match.frame,alpha:f,
+   lowerConsumed:a.match.applied.map(p=>({...p.c})),upperConsumed:b.match.applied.map(p=>({...p.c})),fighters:[{seat:last.you,sourceMode:'prediction'},...provenance]});}catch{}
   return {...pred,fighters:pred.fighters.map(k=>remote.get(k.seat)||k),projectiles:[...ownProjectiles,...b.match.projectiles.filter(p=>p.owner!==last.you&&!ownIds.has(p.id)).map(p=>position(a.match.projectiles.find(q=>q.id===p.id&&q.owner===p.owner),p,false))]};
  }
  return {push,sample};

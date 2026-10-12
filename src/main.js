@@ -8,9 +8,11 @@ import Net from '../game/net.cjs';
 import Solo from '../game/solo.cjs';
 import M from '../game/match.cjs';
 import Stages from '../game/stage.cjs';
+import Observation from '../game/observation.cjs';
 
 const $=id=>document.getElementById(id);
 const world=createWorld($('stage'));
+const observation=Observation.create();
 const KIND_LABEL={doll3d:'3D 布偶',sprite:'2D 立绘',toy:'内置形象'};
 // The computer's look changes every match; its style is the same choice space as yours.
 const CPU_LOOKS=['cat','bunny','mouse'];
@@ -170,7 +172,7 @@ function applyCpuStyle(){if(transport?.role()!=='solo')return;const s=prefs.cpuS
 async function startLan(){
   // Recoverable transport gaps already have the pause/reconnect banner. Do not
   // leave an IPC error over the arena after the same connection has recovered.
-  transport=Net.create(sdk.sessions,{onView,onConnection,onAsset,onError:e=>{if(!/\b(backpressure|peer_offline|not_connected)\b/.test(e.message))error(describe(e));}});
+  transport=Net.create(sdk.sessions,{onView,onConnection,onAsset,observation,onError:e=>{if(!/\b(backpressure|peer_offline|not_connected)\b/.test(e.message))error(describe(e));}});
   const ctx=await transport.start(profileOf(driver),driver.asset);
   view={you:ctx.role==='host'?0:1,players:[],matchNo:0};
   // The host starts the lobby on its remembered stage; it can still change it there.
@@ -309,7 +311,10 @@ addEventListener('keydown',e=>{
   const a=KEYMAP[e.code];if(!a)return;
   if(mode!=='fight')return;
   e.preventDefault();if(e.repeat)return;
-  held.add(a);pressAction(a);pushInput();
+  const inputAt=observation.enabled?performance.now():null;
+  held.add(a);pressAction(a);
+  if(observation.enabled){observation.key({t:inputAt,seat:mySeat(),matchNo:view?.matchNo??null,action:a,counter:pad.c[a],code:e.code,trusted:e.isTrusted});if(a==='up'&&prefs.tapJump)observation.key({t:inputAt,seat:mySeat(),matchNo:view?.matchNo??null,action:'tap',counter:pad.c.tap,code:e.code,trusted:e.isTrusted});}
+  pushInput();
 });
 addEventListener('keyup',e=>{
   const a=KEYMAP[e.code];if(!a)return;held.delete(a);
@@ -411,7 +416,7 @@ function frame(now){
   if(m&&transport){processEvents(m);hud(m);}
   // Menus show the stage that will be fought on (title: my pick; lobby: the host's).
   if(!(m&&transport))world.setStage(view?.settings?.stage||prefs.stage);
-  world.update({match:transport?(transport.present?.()||m):null,dt,events:m&&transport?eventsFor(m):[]});
+  world.update({match:transport?(transport.present?.()||m):null,dt,events:m&&transport?eventsFor(m):[],onSubmit:observation.enabled?sample=>observation.scene({matchNo:view?.matchNo??null,...sample}):null});
   requestAnimationFrame(frame);
 }
 
@@ -422,6 +427,7 @@ function matchSummary(m){return m&&{stage:m.stage,phase:m.phase,frame:m.frame,ti
 Object.defineProperty(window,'__brawl',{value:{
   get state(){const v=view?{...view,match:undefined}:null;return {audio:{music:audio.music,sfx:audio.sfx,unlocked:audio.unlocked,...audio.diagnostics()},mode,connection,view:v?structuredClone(v):null,match:matchSummary(currentMatch()),driver:driver&&{...driver.profile},input:I.clone(pad),prefs:{...prefs}};},
   world:()=>world.diagnostics(),transport:()=>transport?.diagnostics()||null,
+  observe:Object.freeze({start:observation.start,stop:observation.stop,read:observation.read,drain:observation.drain}),
 }});
 async function boot(){
   show('title-panel');$('swap').open=!sdk?.character;renderFighterCard();renderTitleOptions();renderTapJump();renderStyles();renderAudioButtons();

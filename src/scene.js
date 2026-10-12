@@ -85,7 +85,7 @@ export function createWorld(canvas){
 
   // ---------- per frame ----------
   let clock=0,lastSeq=0;
-  function update({match:m,dt,events=[]}){
+  function update({match:m,dt,events=[],onSubmit=null}){
     clock+=dt;
     if(m){setStage(m.stage);stage.update(m.frame);}
     for(const e of events){if(e.seq<=lastSeq)continue;lastSeq=e.seq;onEvent(e,m);}
@@ -117,6 +117,9 @@ export function createWorld(canvas){
     drawDebug(m);
     frameCamera(m,dt);
     renderer.render(scene,camera);
+    // A CPU-side render submission, never proof of GPU completion or display.
+    // Read the actual roots after normal rendering; observation cannot affect play.
+    if(onSubmit)try{onSubmit({match:m,fighters:(m?.fighters||[]).map(f=>{const k=fighters.get(f.seat);return {seat:f.seat,gameX:f.x,gameY:f.y,worldX:k?.root?.position.x??null,worldY:k?.root?.position.y??null,visible:!!k?.root?.visible,state:f.state,move:f.move?.id||null};})});}catch{}
   }
   function onEvent(e,m){
     const at=(x,y)=>new THREE.Vector3(x*S,y*S,0.4);
