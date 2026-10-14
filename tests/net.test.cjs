@@ -93,7 +93,7 @@ test('forged data: host ignores guest views and damage fields; guest rejects inv
   const before=L.h.live().fighters[1].percent;
   const fake=JSON.parse(JSON.stringify(L.views.g));fake.match.fighters[0].percent=999;fake.match.fighters[0].stocks=0;
   await L.sdk.guest.send({type:'brawl.view',payload:{serial:1e9,view:{...fake,you:0}},lane:'latest',key:'view'});
-  await L.sdk.guest.send({type:'brawl.input',payload:{input:{x:1e9,percent:999,stocks:0,c:{attack:'x'}},readySeq:'no'},lane:'latest',key:'input'});
+  await L.sdk.guest.send({type:'kit.up',payload:{j:{k:{ev:'[]',gack:0},s:{input:{x:1e9,percent:999,stocks:0,c:{attack:'x'}},readySeq:'no'}}},lane:'latest',key:'input'});
   await new Promise(r=>setTimeout(r,150));
   assert.equal(L.h.live().fighters[0].percent,0,'host fighter percent untouched');
   assert.equal(L.h.live().fighters[0].stocks,3);assert.equal(L.h.live().fighters[1].percent,before);
@@ -101,7 +101,7 @@ test('forged data: host ignores guest views and damage fields; guest rejects inv
   const forgedWire=require('../game/state-wire.cjs').create();
   for(let n=1;n<L.g.diagnostics().stateWire.receiver.generation;n++)forgedWire.reset();
   const forged=await forgedWire.encode({serial:2e9,view:{...L.views.g,match:{...L.views.g.match,fighters:[{x:'nan'}]}}});
-  await L.sdk.host.send({type:'brawl.view',payload:forged.envelope,lane:'latest',key:'forged'});
+  await L.sdk.host.send({type:'kit.st',payload:{j:{k:{ev:'[]',acks:{},m:true},s:forged.envelope}},lane:'latest',key:'forged'});
   await wait(()=>L.errors.includes('invalid_view'),'forged view rejected');
   L.h.dispose();L.g.dispose();
 });

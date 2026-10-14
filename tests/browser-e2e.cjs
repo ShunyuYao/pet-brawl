@@ -4,7 +4,7 @@
 // and every check reads what the game shows or the state it exposes for inspection.
 // Private character packs come from the sibling rat-doll-lab (local only).
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os'),{spawn}=require('node:child_process');
-const ROOT=path.resolve(__dirname,'..'),REPO=path.resolve(ROOT,'../..');
+const ROOT=path.resolve(__dirname,'..'),REPO=process.env.PET_HOST_ROOT||path.resolve(ROOT,'../..');
 const {connect}=require('./cdp.cjs');
 const DOLL=process.env.BRAWL_DOLL_ZIP||path.resolve(ROOT,'../rat-doll-lab/dist/rat-doll-female.zip');
 const IMAGE=process.env.BRAWL_IMAGE||path.resolve(ROOT,'../rat-doll-lab/dist/rat-doll-male/frames/idle/frame_00.png');
@@ -186,5 +186,5 @@ async function wait(p,expr,label,ms=20000){const until=Date.now()+ms;let last;wh
     check(report.errors.length===0,'no uncaught page exceptions',report.errors);
     report.ok=true;
   }catch(e){report.ok=false;report.failure=e.stack;console.error(e.stack);if(p)await shot('failure').catch(()=>{});process.exitCode=1;}
-  finally{fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2));try{process.kill(-child.pid,'SIGKILL');}catch{}fs.rmSync(profile,{recursive:true,force:true});p?.close();}
+  finally{p?.close();try{process.kill(-child.pid,'SIGTERM');}catch{}let exited=false;for(let n=0;n<100;n++){try{process.kill(child.pid,0);}catch(e){if(e.code==='ESRCH'){exited=true;break;}}await sleep(50);}report.ownedProcessExited=exited;if(!exited){report.ok=false;process.exitCode=1;try{process.kill(-child.pid,'SIGKILL');}catch{}}else fs.rmSync(profile,{recursive:true,force:true});fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2));}
 })().then(()=>process.exit(process.exitCode||0));

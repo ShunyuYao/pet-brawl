@@ -8,18 +8,23 @@ async function replay({batched=false,projectiles=false,source=process.env.BRAWL_
  const observation=capturePrediction?require('../../game/observation.cjs').create({now:()=>clock}):null;if(observation)observation.start({capacity:32768});
  const wire=require('../../game/state-wire.cjs').create({now:()=>clock});
  const sdk={getContext:async()=>({role:'guest',protocol:module.exports.PROTOCOL}),join:async()=>({status:'connected',epoch:1}),
-  poll:()=>new Promise(r=>{waiter=r;}),send:async m=>{if(m.type==='brawl.input'){const input=I.clone(m.payload.input);acks.push({at:clock+(typeof inputDelayMs==='function'?inputDelayMs(clock):inputDelayMs),seq:input.seq,input});if(capturePrediction)sentInputs.push({t:clock,input});if(m.payload.stateAck)wire.acknowledge(m.payload.stateAck);}},leave:async()=>({})};
+  poll:()=>new Promise(r=>{waiter=r;}),send:async m=>{const payload=m.type==='kit.up'?m.payload.j.s:m.payload;if((m.type==='brawl.input'||m.type==='kit.up')&&payload){const input=I.clone(payload.input);acks.push({at:clock+(typeof inputDelayMs==='function'?inputDelayMs(clock):inputDelayMs),seq:input.seq,input});if(capturePrediction)sentInputs.push({t:clock,input});if(payload.stateAck)wire.acknowledge(payload.stateAck);}},leave:async()=>({})};
  // Inject only the presentation parameter at the real module boundary. The
  // production net source and its prediction/timer/message algorithms are intact.
  const actualRequire=createRequire(path.join(root,'game/net.cjs'));
- const module={exports:{}},box={module,require:id=>{const value=actualRequire(id);return id==='./remote-motion.cjs'&&delayMs!==undefined?{...value,create:options=>value.create({...options,delayMs})}:value;},Date,Promise,TextEncoder,TextDecoder,Uint8Array,btoa,atob,setTimeout,clearTimeout,
+ const publicKit=actualRequire('../vendor/pet-kit/index.js');let realRoom;
+ const module={exports:{}},box={module,require:id=>{if(id==='../vendor/pet-kit/index.js')return {...publicKit,Room:realRoom};const value=actualRequire(id);return id==='./remote-motion.cjs'&&delayMs!==undefined?{...value,create:options=>value.create({...options,delayMs})}:value;},Date,Promise,TextEncoder,TextDecoder,Uint8Array,btoa,atob,setTimeout,clearTimeout,
   setInterval(fn,ms){const t={fn,ms,next:clock+ms};timers.push(t);return t;},clearInterval(t){t.off=true;}};
+ const kitModule={exports:{}};
+ const kitBox={...box,module:kitModule,require:id=>{if(id==='./wire.js')return publicKit.Wire;throw Error('unexpected kit dependency '+id);},
+  setTimeout(fn,ms){const t={fn,ms,next:clock+ms,once:true};timers.push(t);return t;},clearTimeout(t){t.off=true;}};
+ vm.runInNewContext(fs.readFileSync(path.join(root,'vendor/pet-kit/room.js'),'utf8'),kitBox,{filename:'actual-vendored-Room.js'});realRoom=kitModule.exports;
  vm.runInNewContext(fs.readFileSync(source||path.join(root,'game/net.cjs'),'utf8'),box,{filename:'actual-net.cjs'});
  const n=module.exports.create(sdk,{now:()=>clock,observation,onError:e=>errors.push(e.message),onView:v=>{if(capturePrediction)reconciles.push({t:clock,authorityFrame:v.match?.frame,predictedFrame:n.live()?.frame,localState:n.live()?.fighters[1].state,localMoveFrame:n.live()?.fighters[1].move?.frame??null,localPresses:n.live()?.stats[1].pressesSeen,ack:v.ack,...n.diagnostics()});}});
  await n.start({name:'Guest',signature:'guest',kind:'toy',color:'#ff0000'});
  const m=M.create({countdown:false,stage:'moon',styles:[projectiles?'mage':'hammer','hammer']});M.place(m,0,{x:-55});M.place(m,1,{x:75});const hostPad=I.create();
  const rows=[],flush=async(expected)=>{
-  if(expected!==undefined&&module.exports.PROTOCOL.version===2){const until=Date.now()+3000;while(n.diagnostics().applied<expected&&!errors.length&&Date.now()<until)await new Promise(r=>setImmediate(r));if(n.diagnostics().applied<expected&&!errors.length)throw Error('wire_decode_timeout');}
+  if(expected!==undefined&&module.exports.PROTOCOL.version>=2){const until=Date.now()+3000;while(n.diagnostics().applied<expected&&!errors.length&&Date.now()<until)await new Promise(r=>setImmediate(r));if(n.diagnostics().applied<expected&&!errors.length)throw Error('wire_decode_timeout '+JSON.stringify({clock,expected,diagnostics:n.diagnostics(),sender:wire.diagnostics(),errors}));}
   for(let j=0;j<8;j++)await Promise.resolve();
  };
  for(let step=0;step<steps;step++){
@@ -38,10 +43,10 @@ async function replay({batched=false,projectiles=false,source=process.env.BRAWL_
   if(waitingSnapshot)packets.length=0;
   if(waiter&&!waitingSnapshot){const due=packets.filter(p=>p.at<=clock);if(due.length){
    packets.splice(0,due.length);const events=[];
-   for(const p of due){let payload={serial:++serial,view:p.view};if(module.exports.PROTOCOL.version===2){const prepared=await wire.encode(payload);wire.sent(prepared);payload=prepared.envelope;}events.push({type:'message',message:{type:'brawl.view',payload}});}
-   const r=waiter;waiter=null;r({cursor:++cursor,epoch,transportState:'connected',events});await flush(serial);
+   for(const p of due){let payload={serial:++serial,view:p.view};if(module.exports.PROTOCOL.version>=2){const prepared=await wire.encode(payload);wire.sent(prepared);payload=prepared.envelope;}events.push({type:'message',message:module.exports.PROTOCOL.version>=3?{type:'kit.st',payload:{j:{k:{ev:'[]',acks:{},m:true},s:payload}}}:{type:'brawl.view',payload}});}
+   const r=waiter;waiter=null;r({cursor:++cursor,epoch,transportState:'connected',events:[{type:'message',message:{type:'kit.pong',payload:{slot:1}}},...events]});await flush(serial);
   }}
-  for(const t of timers)if(!t.off&&clock+1e-6>=t.next){t.next+=t.ms;await t.fn();await flush();}
+  for(const t of timers)if(!t.off&&clock+1e-6>=t.next){if(t.once)t.off=true;else t.next+=t.ms;await t.fn();await flush();}
   const shown=n.present?n.present():n.live();if(shown)rows.push({t:clock,x:shown.fighters[0].x,truth:m.fighters[0].x,dir,cycle,projectiles:shown.projectiles.map(p=>({id:p.id,x:p.x,vx:p.vx,age:p.age})),...(capturePrediction?{predictedFrame:n.live().frame,authorityFrame:m.frame,localX:n.live().fighters[1].x,authorityLocalX:m.fighters[1].x,...n.diagnostics()}:{} )});
  }
  n.dispose();if(waiter)waiter({events:[],transportState:'closed',epoch:1,cursor});await flush();

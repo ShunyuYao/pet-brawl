@@ -1,76 +1,40 @@
 'use strict';
-// Invitation session adapter over the host's `pet.sessions` bridge (HTML work, experimental).
-// Host = seat 0 and runs the authoritative room; guest = seat 1 sends inputs only
-// (SPEC §10). The guest predicts locally: on every host snapshot it rewinds to the
-// snapshot and replays its own frame-indexed inputs to the prediction target.
-// Limits honoured (demo/core/peer-session/contracts.js): latest lane ≤ 30 calls/s,
-// ≤ 60 KB per message, ≤ 8 latest keys; transfers ≤ 1 MB each, one at a time.
+// pet-kit owns the invitation, poll loop, send budgets, reliable events and looks.
+// Brawl keeps its lossless state codec, authoritative rules and frame-indexed prediction.
 const R=require('./room.cjs'),I=require('./input.cjs');
-const RemoteMotion=require('./remote-motion.cjs');
-const StateWire=require('./state-wire.cjs');
-const Prediction=require('./prediction.cjs');
-
-const PROTOCOL=Object.freeze({id:'pet-brawl',version:2}),PURPOSE='brawl.profile.v1';
-const VIEW_MS=40,INPUT_MS=40,SIM_MS=1000/60,STALE_MS=1500;
-const pause=ms=>new Promise(r=>setTimeout(r,ms));
-const encode=value=>{const b=new TextEncoder().encode(JSON.stringify(value));let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode(...b.subarray(i,i+8192));return btoa(s);};
-const decode=value=>{if(typeof value!=='string'||value.length>1400000)throw Error('invalid_profile');return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(value),c=>c.charCodeAt(0))));};
-
+const {Room}=require('../vendor/pet-kit/index.js');
+const RemoteMotion=require('./remote-motion.cjs'),StateWire=require('./state-wire.cjs'),Prediction=require('./prediction.cjs');
+const PROTOCOL=Object.freeze({id:'pet-brawl',version:3}),PURPOSE='brawl.profile.v2';
+const VIEW_MS=40,SIM_MS=1000/60,STALE_MS=1500;
 function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()=>{},now=()=>Date.now(),pauseTimeoutMs,observation=null}={}){
-  let context=null,host=false,room=null,connection='waiting',closed=false,disposed=false,cursor=0,epoch=0;
-  // Looks are sent once per signature. A reconnect or resync does NOT resend them: the peer keeps
-  // what it received, and the host bridge caps a session at 8 MB of transfers (health check
-  // 2026-09-29: resending on every reconnect closed the match after a few Wi-Fi hiccups).
-  // The only resend: the guest's hello says it lacks the host's look (at most twice).
-  let profile=null,asset=null,sentSignature='',sentAt=0,resends=0,transferJob=null,lastHeard=0,lastHello=0,serial=0,applied=0;
-  const received=new Set();
-  let pad=I.create(),readySeq=0,readyWant=false,guestReadySeq=0,sendingView=false,sendingInput=false,lastInputSent=0,lastSentKey='';
-  // Guest prediction state
-  let view=null,pred=null,predMatchNo=-1,seq=0,lastViewAt=0,predictionReset=null;
-  const prediction=Prediction.create();
-  const remoteMotion=RemoteMotion.create(),stateWire=StateWire.create({now});
-  const timers=[];
-  const fail=e=>onError(e instanceof Error?e:Error(String(e)));
-  const status=s=>{if(connection!==s){connection=s;onConnection(s);if(observation?.enabled)observation.network('state',{state:s,epoch});}};
-  const send=(type,payload,key)=>closed||disposed?Promise.reject(Error('session_closed')):sdk.send({type,payload,lane:'latest',key});
+  let context=null,host=false,room=null,connection='waiting',closed=false,disposed=false,epoch=0,profile=null;
+  let lastHeard=0,serial=0,applied=0,peerOnline=false,lastLocalView=0,prepared=null,preparedView=null;
+  let pad=I.create(),readySeq=0,readyWant=false,guestReadySeq=0,lastInputSent=0,lastSentKey='';
+  let view=null,pred=null,predMatchNo=-1,seq=0,lastViewAt=0,predictionReset=null,inMatch=false;
+  const prediction=Prediction.create(),remoteMotion=RemoteMotion.create(),stateWire=StateWire.create({now}),timers=[];
+  const fail=e=>{if(!disposed)onError(e instanceof Error?e:Error(String(e)));};
+  function initHost(){host=kit.isHost();if(host&&!room){room=R.create({now,pauseTimeoutMs});room.join(0,profile);onView(room.view(0));}}
+  function status(s){
+    if(disposed||closed&&s!=='closed')return;
+    initHost();if(connection!==s){connection=s;onConnection(s);if(observation?.enabled)observation.network('state',{state:s,epoch});}
+  }
   function end(reason='peer_left'){
-    if(closed)return;closed=true;stateWire.close();timers.forEach(clearInterval);status('closed');
-    if(room){room.room.notice=reason;onView(room.view(0));}
-    else if(view){view={...view,notice:reason};onView(view);}
+    if(closed)return;closed=true;stateWire.close();timers.forEach(clearInterval);kit.dispose();status('closed');
+    if(room){room.room.notice=reason;onView(room.view(0));}else if(view){view={...view,notice:reason};onView(view);}
   }
-  async function upload(){
-    if(transferJob||!asset||connection!=='connected'||closed||sentSignature===profile.signature)return;
-    const signature=profile.signature,payload=encode({v:1,signature,asset});
-    if(payload.length>Math.ceil(1024*1024/3)*4){fail(Error('asset_too_large'));sentSignature=signature;return;}
-    transferJob=sdk.transfer({purpose:PURPOSE,contentType:'application/octet-stream',dataBase64:payload})
-      .then(()=>{sentSignature=signature;sentAt=now();}).catch(fail).finally(()=>{transferJob=null;});
-  }
-  // ---------- host ----------
   let hostLast=0,hostAcc=0;
   function hostTick(){
     const t=now();if(!hostLast)hostLast=t;hostAcc+=Math.min(2000,t-hostLast);hostLast=t;
     const guest=room.seat(1);
+    if(now()-lastLocalView>=100){lastLocalView=now();onView(room.view(0));}
     if(guest){
-      const online=connection==='connected'&&t-lastHeard<STALE_MS;
+      const online=connection==='connected'&&peerOnline&&t-lastHeard<STALE_MS;
       if(guest.connected!==online)guest.connected=online;
       if(!online)room.pauseFor('peer_lost');else room.resume();
       room.checkPause();
     }
     while(hostAcc>=SIM_MS){const before=observation?.enabled?observation.beforeTick(room.room.matchNo,room.room.match):null;room.tick();if(observation?.enabled)observation.afterTick(before,room.room.matchNo,room.room.match);hostAcc-=SIM_MS;}
   }
-  let lastLocalView=0;
-  async function publish(){
-    // The host's own screen reads the room directly; refresh its lobby view ~10×/s.
-    if(now()-lastLocalView>=100){lastLocalView=now();onView(room.view(0));}
-    if(connection!=='connected'||sendingView||closed)return;sendingView=true;
-    try{
-      const snapshot=room.view(1),nextSerial=++serial;
-      const prepared=await stateWire.encode({serial:nextSerial,view:snapshot});
-      if(!stateWire.current(prepared)||closed||disposed)return;
-      await send('brawl.view',prepared.envelope,'view');stateWire.sent(prepared);if(observation?.enabled)observation.published(nextSerial,snapshot);
-    }catch(e){if(!/backpressure/.test(e.message))fail(e);}finally{sendingView=false;}
-  }
-  // ---------- guest ----------
   let guestLast=0,guestAcc=0;
   function guestTick(){
     const t=now();if(!guestLast)guestLast=t;guestAcc+=Math.min(500,t-guestLast);guestLast=t;
@@ -84,83 +48,70 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     prediction.reconcile(v,{reset:predictionReset||(lastViewAt&&now()-lastViewAt>STALE_MS?'stale':null)});
     predictionReset=null;pred=prediction.live();predMatchNo=v.matchNo;
   }
-  async function guestSend(force=false){
-    if(connection!=='connected'||sendingInput||closed)return;
-    const key=JSON.stringify([pad.x,pad.y,pad.run,pad.h,pad.c,readySeq]);
-    if(!force&&key===lastSentKey&&now()-lastInputSent<200)return;
-    if(!force&&now()-lastInputSent<34)return; // stay under 30 calls/s; the 25 Hz timer sends the rest
-    sendingInput=true;
-    try{
-      if(profile&&now()-lastHello>1000){lastHello=now();await send('brawl.hello',{profile,have:[...received].slice(-4)},'hello');}
-      pad.seq=seq;lastSentKey=key;lastInputSent=now();
-      await send('brawl.input',{input:I.clone(pad),readySeq,ready:readyWant,stateAck:stateWire.feedback()},'input');
-    }catch(e){if(!/backpressure/.test(e.message))fail(e);}finally{sendingInput=false;}
-  }
-  async function event(e){
-    if(e.type==='closed'){end(e.reason||'peer_left');return;}
-    if(e.type==='resync_required'){stateWire.resync();if(observation?.enabled)observation.network('reset',{reason:e.reason||'resync_required',epoch});return;} // State reset never resends delivered looks.
-    if(e.type==='transfer'&&e.purpose===PURPOSE){
-      const data=await sdk.readTransfer({transferId:e.transferId});
-      if(data.purpose!==PURPOSE||data.contentType!=='application/octet-stream')throw Error('invalid_profile');
-      const value=decode(data.dataBase64);if(!value||value.v!==1||typeof value.signature!=='string')throw Error('invalid_profile');
-      lastHeard=now();received.add(value.signature);onAsset(host?1:0,value.signature,value.asset);return;
-    }
-    if(e.type!=='message')return;
-    const {type,payload:p}=e.message;lastHeard=now();
-    if(host){
-      // The host only ever accepts a profile and controller input from the guest.
-      if(type==='brawl.hello'){
-        room.join(1,p?.profile);
-        const have=Array.isArray(p?.have)?p.have:null;
-        if(have&&profile&&sentSignature===profile.signature&&!transferJob&&!have.includes(profile.signature)&&now()-sentAt>8000&&resends<2){resends++;sentSignature='';}
-        return;
-      }
-      if(type==='brawl.input'&&p&&typeof p==='object'){
-        stateWire.acknowledge(p.stateAck);
-        if(!room.seat(1))return;
+
+  const kit=Room.create(sdk,{
+    protocol:PROTOCOL,purpose:PURPOSE,maxPlayers:2,appearancePolicy:'continuous',now,compress:false,pollGapMs:0,
+    rates:{match:25,lobby:25,up:25},budget:{callsPerSecond:28},
+    prefs:{defaults:{},validate:p=>p.profile?{profile:R.validateProfile(p.profile)}:{}},
+    async hostState(){
+      if(!room||closed||disposed)return null;
+      preparedView=room.view(1);prepared=await stateWire.encode({serial:++serial,view:preparedView});
+      return stateWire.current(prepared)&&!closed&&!disposed?prepared.envelope:null;
+    },
+    onStateSent(state){
+      if(host&&prepared&&state===prepared.envelope&&stateWire.sent(prepared)&&observation?.enabled)observation.published(prepared.packet.serial,preparedView);
+    },
+    guestState(){
+      const key=JSON.stringify([pad.x,pad.y,pad.run,pad.h,pad.c,readySeq]);
+      if(key===lastSentKey&&now()-lastInputSent<200)return undefined;
+      lastSentKey=key;lastInputSent=now();pad.seq=seq;
+      return {input:I.clone(pad),readySeq,ready:readyWant,stateAck:stateWire.feedback()};
+    },
+    onConnection:status,onError:fail,onClosed:()=>end('peer_left'),onPeerLeft:()=>end('peer_left'),
+    onReset(e){
+      epoch=e.epoch;
+      if(e.reason==='epoch'){stateWire.reset();predictionReset='epoch';}else stateWire.resync();
+      if(observation?.enabled)observation.network('reset',{reason:e.reason,epoch});
+    },
+    onLobby(lobby){
+      if(closed||disposed)return;initHost();if(!host)return;
+      const p=lobby.players.find(p=>p.slot===1);peerOnline=!!p?.online;
+      if(p?.prefs?.profile){room.join(1,p.prefs.profile);lastHeard=now();}
+    },
+    onAsset(signature,asset,seat){if(!closed&&!disposed)onAsset(seat??(host?1:0),signature,asset);},
+    async onState(p,seat){
+      if(closed||disposed)return;lastHeard=now();
+      if(host){
+        if(seat!==1||!p||typeof p!=='object')return;
+        stateWire.acknowledge(p.stateAck);if(!room.seat(1))return;
         room.input(1,p.input);
         const s=Number(p.input?.seq);if(Number.isSafeInteger(s)&&s>room.room.ack)room.room.ack=s;
-        if(Number.isSafeInteger(p.readySeq)&&p.readySeq>guestReadySeq){guestReadySeq=p.readySeq;try{room.ready(1,!!p.ready);}catch(err){fail(err);}}
+        if(Number.isSafeInteger(p.readySeq)&&p.readySeq>guestReadySeq){guestReadySeq=p.readySeq;room.ready(1,!!p.ready);}
+        return;
       }
-      return;
-    }
-    if(type!=='brawl.view')return;
-    await stateWire.decode(p,decoded=>{
-      if(closed||disposed)throw Error('session_closed');
-      if(!R.validView(decoded.view)||decoded.view.you!==1||decoded.serial<=applied)throw Error('invalid_view');
-      // Successful reconstruction and game application precede the feedback ACK.
-      const previous=pred,previousMatchNo=predMatchNo;
-      reconcile(decoded.view);view=decoded.view;lastViewAt=now();remoteMotion.push(view,lastViewAt,decoded.serial);onView(view);applied=decoded.serial;
-      if(observation?.enabled)observation.applied({serial:decoded.serial,view,previous,pred,previousMatchNo,predictionReset:prediction.diagnostics().predictionReset});
-    });
-  }
-  async function poll(){
-    while(!disposed&&!closed){
-      try{
-        const b=await sdk.poll({cursor,waitMs:1000});if(disposed||closed)break;
-        if(b.transportState==='closed'){for(const e of b.events)if(e.type==='closed'){end(e.reason);break;}end();break;}
-        if(b.epoch!==epoch){epoch=b.epoch;stateWire.reset();predictionReset='epoch';if(observation?.enabled)observation.network('reset',{reason:'epoch',epoch});} // Reconnect resets bases, never looks.
-        status(b.transportState);if(b.transportState==='connected'&&b.events.length)lastHeard=now();
-        for(const e of b.events){try{await event(e);}catch(err){fail(err);}}cursor=b.cursor;
-      }catch(e){if(/session_closed|caller_disposed|permission_denied|permission_revoked|account_changed/.test(e.message)){end(e.message);break;}status('reconnecting');fail(e);await pause(350);}
-    }
-  }
+      if(seat!==0)return;
+      await stateWire.decode(p,decoded=>{
+        if(closed||disposed)throw Error('session_closed');
+        if(!R.validView(decoded.view)||decoded.view.you!==1||decoded.serial<=applied)throw Error('invalid_view');
+        const previous=pred,previousMatchNo=predMatchNo;
+        reconcile(decoded.view);view=decoded.view;lastViewAt=now();remoteMotion.push(view,lastViewAt,decoded.serial);onView(view);applied=decoded.serial;
+        if(observation?.enabled)observation.applied({serial:decoded.serial,view,previous,pred,previousMatchNo,predictionReset:prediction.diagnostics().predictionReset});
+      });
+    },
+  });
   async function start(localProfile,localAsset){
-    if(context)throw Error('already_started');
-    context=await sdk.getContext();if(!context)throw Error('no_invitation');
-    if(context.protocol?.id!==PROTOCOL.id||context.protocol?.version!==PROTOCOL.version)throw Error('protocol_mismatch');
-    host=context.role==='host';profile=R.validateProfile(localProfile);asset=localAsset||null;
-    if(host){room=R.create({seed:context.invitationId,now,pauseTimeoutMs});room.join(0,profile);onView(room.view(0));}
-    const joined=await sdk.join();epoch=joined.epoch;lastHeard=now();status(joined.status==='connected'?'connected':'waiting');void poll();
-    if(host){timers.push(setInterval(()=>{try{hostTick();}catch(e){fail(e);}},SIM_MS));timers.push(setInterval(()=>void publish(),VIEW_MS));}
-    else{timers.push(setInterval(()=>{try{guestTick();}catch(e){fail(e);}},SIM_MS));timers.push(setInterval(()=>void guestSend(),INPUT_MS));}
-    timers.push(setInterval(()=>void upload(),250));
+    if(context)throw Error('already_started');if(closed||disposed)throw Error('session_closed');
+    profile=R.validateProfile(localProfile);
+    context=await kit.start(profile,localAsset,{profile});
+    if(closed||disposed)throw Error('session_closed');initHost();epoch=kit.stats().epoch;lastHeard=now();
+    timers.push(setInterval(()=>{try{
+      if(host){hostTick();const active=!!room.room.match&&room.room.match.phase!=='results';if(active!==inMatch){inMatch=active;kit.setMatch(active);}}
+      else guestTick();
+    }catch(e){fail(e);}},SIM_MS));
     return context;
   }
   return {
-    start,
-    role:()=>context?.role||null,
-    // Host: the authoritative room. Guest: the latest host view (lobby, players, events).
+    start,role:()=>context?.role||null,
     peek:()=>room?room.view(0):view,
     // What to draw right now: the host's live match, or the guest's prediction.
     live:()=>room?room.room.match:pred,
@@ -171,14 +122,15 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
       return remoteMotion.sample(pred,now(),closed,observation?.enabled?value=>observation.presentation(value):null);
     },
     hostStale:()=>!host&&!closed&&!disposed&&!!view&&(connection!=='connected'||now()-lastViewAt>STALE_MS),
-    setProfile(p,a){profile=R.validateProfile(p);asset=a||null;sentSignature='';resends=0;lastHello=0;if(room)room.join(0,profile);},
-    setInput(v){if(room)room.input(0,v);else{pad=I.normalize(v,pad);pad.seq=seq;void guestSend();}},
-    ready(value){if(closed)throw Error('session_closed');if(room)room.ready(0,value);else{readySeq++;readyWant=!!value;lastHello=0;void guestSend(true);}},
+
+    setProfile(p,a){profile=R.validateProfile(p);kit.setProfile(profile,a);kit.setPrefs({profile});if(room)room.join(0,profile);},
+    setInput(v){if(room)room.input(0,v);else{pad=I.normalize(v,pad);pad.seq=seq;void kit.flushState().catch(fail);}},
+    ready(value){if(closed)throw Error('session_closed');if(room)room.ready(0,value);else{readySeq++;readyWant=!!value;void kit.flushState().catch(fail);}},
     setTime(sec){if(!room)throw Error('host_only');room.setTime(sec);},
     setStage(id){if(!room)throw Error('host_only');room.setStage(id);},
-    async leave(){try{await sdk.leave();}finally{end('peer_left');}},
-    dispose(){disposed=true;stateWire.close();timers.forEach(clearInterval);},
-    diagnostics:()=>({role:context?.role,connection,closed,serial,applied,seq,ack:view?.ack??room?.room.ack,...prediction.diagnostics(),profile:profile?.signature,sentSignature,stateWire:stateWire.diagnostics()}),
+    async leave(){await kit.leave();end('peer_left');},
+    dispose(){disposed=true;stateWire.close();kit.dispose();timers.forEach(clearInterval);},
+    diagnostics:()=>({role:context?.role,connection,closed,serial,applied,seq,ack:view?.ack??room?.room.ack,...prediction.diagnostics(),profile:profile?.signature,sentSignature:kit.stats().ownSentSignature,stateWire:stateWire.diagnostics(),kit:kit.stats()}),
   };
 }
 module.exports={create,PROTOCOL,PURPOSE,STALE_MS};

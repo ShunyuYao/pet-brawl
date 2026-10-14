@@ -1,12 +1,12 @@
 # 桌宠大乱斗 · Pet Brawl
 
-> **未发布候选 / Unreleased candidate**：本分支的主 HTML 声明 `transport:auto`，使用 `pet-brawl` v2 差分同步，需支持该声明的宿主通过邀请选择局域网或公网中转。`dist/桌宠大乱斗-LAN.html` 使用同一套 v2 游戏代码、仅声明 `transport:lan`，供具备会话 SDK 的旧宿主使用；它不支持公网邀请。两人必须接受同一份 HTML，既有附件不会自动升级。本机测试不等同跨公网验收，未发布或覆盖 v0.5.2 发行版。
-> The default HTML is an unreleased auto-transport candidate. The separately built LAN HTML uses the same v2 game protocol and existing LAN session SDK. Both peers must use the identical artifact. Internet quality and release acceptance remain separate gates.
+> **未发布候选 / Unreleased candidate**：本分支的主 HTML 声明 `transport:auto`，使用 `pet-brawl` v3 差分同步，需支持该声明的宿主通过邀请选择局域网或公网中转。`dist/桌宠大乱斗-LAN.html` 使用同一套 v3 游戏代码、仅声明 `transport:lan`，供具备会话 SDK 的旧宿主使用；它不支持公网邀请。两人必须接受同一份 HTML，既有附件不会自动升级。本机测试不等同跨公网验收，未发布或覆盖 v0.5.2 发行版。
+> The default HTML is an unreleased auto-transport candidate. The separately built LAN HTML uses the same v3 game protocol and existing LAN session SDK. Both peers must use the identical artifact. Internet quality and release acceptance remain separate gates.
 > 设计与验证记录：[邀请联网与无损状态同步](docs/INTERNET-STATE-DELIVERY.md)。
 
-一个单文件 HTML 的双人平台格斗游戏，给「吐梨邦」桌宠的 HTML 作品能力做的。在桌宠里打开会自动带入你当前的桌宠形象上场；通过桌宠「发送并一起玩」可以和同一局域网的朋友对打，也可以单人挑战电脑。
+一个单文件 HTML 的双人平台格斗游戏，给「吐梨邦」桌宠的 HTML 作品能力做的。在桌宠里打开会自动带入你当前的桌宠形象上场；通过桌宠「发送并一起玩」可以和局域网或互联网好友对打，也可以单人挑战电脑。
 
-A single-file HTML platform fighter for the 吐梨邦 desktop pet. Opened inside the pet it fights with your current pet; "send and play together" starts a LAN match with a friend, or play solo against the computer. 8 fighting styles, 3 stages.
+A single-file HTML platform fighter for the 吐梨邦 desktop pet. Opened inside the pet it fights with your current pet; "send and play together" starts a LAN or internet match with a friend, or play solo against the computer. 8 fighting styles, 3 stages.
 
 交付文件：[`dist/桌宠大乱斗.html`](dist/桌宠大乱斗.html)（约 840 KB，three.js、cannon-es 与全部代码内联，无 CDN、规则在本机运行；公网邀请需宿主中转）。
 完整规则、招式表与平衡记录：[docs/SPEC.zh-CN.md](docs/SPEC.zh-CN.md)。
@@ -68,7 +68,7 @@ Latest: [v0.5.2 download and release notes](https://github.com/ShunyuYao/pet-bra
 
 ## 联机
 
-房主权威：房主运行规则（`game/room.cjs`、`game/match.cjs`，固定 60 帧/秒），客人只发操作；「按了一下」的动作用累计计数器发送，不会因为只保留最新一条而丢键。客人本地预测自己的动作并向房主结果收敛。使用宿主 `pet.sessions`（本分支协议 `pet-brawl` v2，2 人）。
+房主权威：房主运行规则（`game/room.cjs`、`game/match.cjs`，固定 60 帧/秒），客人只发操作；「按了一下」的动作用累计计数器发送，不会因为只保留最新一条而丢键。客人本地预测自己的动作并向房主结果收敛。使用宿主 `pet.sessions`（本分支协议 `pet-brawl` v3，2 人）。
 
 客端显示其他玩家及其弹道时，按房主帧时间平滑呈现，避免本地输入确认造成远端反复跳回；自己操作的预测与房主战斗判定保持独立。已发送的旧 HTML 不会自动替换，需重新发送新的 `dist/桌宠大乱斗.html` 才使用修复版。调查与证据见 [联机运动呈现审计](docs/SMOOTHNESS-DELIVERY.md)。
 
@@ -105,3 +105,9 @@ npm run test:host:smoothness # 双宿主实际绘制轨迹、反向帧与抖动�
 ## License
 
 MIT
+
+## Shared networking / 公共联机底座
+
+本候选固定使用 pet-kit 0.2.1（MIT）；Room 管理传输、形象和限额，游戏保留自己的差分状态、预测和插值。异步状态应用完成后才确认基线；SDK 成功发送通知不等于接收端确认。`PET_KIT_DIR=/absolute/pet-kit npm run kit:update` 导入已审核的库源码，构建会校验 vendor 摘要。
+
+This candidate vendors pet-kit 0.2.1 while retaining game-specific state deltas, prediction and interpolation. Both peers must use the same artifact and application protocol v3. No installer or release is published by this source change.

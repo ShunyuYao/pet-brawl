@@ -20,14 +20,14 @@ exports.run=async({a,b,H,wait,state,activateButton,check,screenshot,json,evidenc
   for(const app of [a,b])await H.evalIn(app.game,`(()=>{document.activeElement?.blur();window.__motion=[];window.__motionRun='normal';window.__motionDir=0;window.__motionChanged=performance.now();window.__brawlRenderProbe=p=>{if(p.match?.phase==='fight'&&window.__motion.length<4000)window.__motion.push({t:performance.now(),since:performance.now()-window.__motionChanged,run:window.__motionRun,dir:window.__motionDir,frame:p.match.frame,fighters:p.match.fighters.map(f=>({seat:f.seat,x:f.x,y:f.y,vx:f.vx,vy:f.vy,state:f.state}))});};return true;})()`);
   for(const run of ['normal','batched']){
    for(const app of [a,b])await H.evalIn(app.game,`window.__motionRun=${JSON.stringify(run)};true`);
-   if(run==='batched')await H.evalIn(b.game,'window.__brawlPollDelay=()=>new Promise(r=>setTimeout(r,180));true');
+   if(run==='batched')await H.evalIn(b.game,'window.__brawlDelayedPolls=0;window.__brawlPollDelay=()=>{window.__brawlDelayedPolls++;return new Promise(r=>setTimeout(r,180));};true');
    for(let i=0;i<8;i++){
     const dir=i%2?-1:1,code=dir===1?'KeyD':'KeyA';
     for(const app of [a,b])await H.evalIn(app.game,`window.__motionDir=${dir};window.__motionChanged=performance.now();true`);
     await k(a.game,code);await H.sleep(520);await k(a.game,code,'keyUp');
    }
   }
-  for(const app of [a,b])await H.evalIn(app.game,'window.__brawlRenderProbe=null;true');
+  const delayedPolls=await H.evalIn(b.game,'window.__brawlDelayedPolls');assert(delayedPolls>=3,'batched path must actually delay at least three real SDK polls');report.delayedPolls=delayedPolls;for(const app of [a,b])await H.evalIn(app.game,'window.__brawlRenderProbe=null;true');
   const stats=[];
   for(const app of [a,b]){
    const frames=await H.evalIn(app.game,'window.__motion');json(path.join(evidence,app.label+'-motion.json'),frames);assert(frames.length>250,'natural animation frames sampled');

@@ -272,7 +272,12 @@ async function brawlPlay(a,b){
     assert.equal(s.driver.name,[...packName].slice(0,16).join(''),'fighter name comes from the current desktop pet');
     assert.equal(await H.evalIn(app.game,'document.querySelector("#pet-auto").hidden'),false);
   }
-  for(const app of [a,b])await wait(async()=>{const f=(await world(app)).fighters;return f.length===2&&f.every(x=>['sprite','doll3d'].includes(x.kind));},'both pets drawn as fighters on '+app.label,30000);
+  // The production host paces each appearance at 12 KiB/s, with a 130 s SDK
+  // deadline. Two current 3D packs can serialize behind the same TLS transfer
+  // queue; the former 30 s fixture deadline stopped while the second was active.
+  const appearanceStarted=Date.now();
+  for(const app of [a,b])await wait(async()=>{const f=(await world(app)).fighters;return f.length===2&&f.every(x=>['sprite','doll3d'].includes(x.kind));},'both pets drawn as fighters on '+app.label,130000);
+  check('both complete current appearances are actually rendered within the SDK transfer deadline',{elapsedMs:Date.now()-appearanceStarted});
   const names=[(await state(a)).driver.name,(await state(b)).driver.name];
   assert.deepEqual((await state(b)).view.players.map(p=>p.name),names);
   check('both hosts auto-import their current desktop pets (no manual import)',{names,kinds});
