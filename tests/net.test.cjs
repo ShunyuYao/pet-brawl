@@ -60,6 +60,16 @@ test('lobby: both players, time setting, assets exchanged, ready starts the figh
   assert.equal(L.views.g.match.stage,'moon','the match is on the host\'s stage for both');
   assert.deepEqual(L.errors,[]);L.h.dispose();L.g.dispose();
 });
+test('lobby ready intent survives stale guest state and starts after healing',async()=>{
+  const L=await lobby();
+  L.sdk.cut('guest');
+  await wait(()=>L.h.peek().players[1].connected===false,'guest becomes stale',4000);
+  L.h.ready(true);L.g.ready(true);
+  await new Promise(resolve=>setTimeout(resolve,250));
+  L.sdk.heal('guest');
+  await wait(()=>L.h.peek().players[1].connected,'guest state resumes');
+  await wait(()=>L.views.g.match?.phase==='countdown'||L.views.g.match?.phase==='fight','both retained ready intents start',2000);
+});
 test('guest input moves only the guest fighter; the guest sees its own move at once (prediction)',async()=>{
   const L=await lobby({latency:60});await fight(L);
   const hx=L.h.live().fighters[0].x,gx=L.h.live().fighters[1].x;

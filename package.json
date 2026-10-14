@@ -13,7 +13,7 @@
     "test:net": "node --test tests/net.test.cjs tests/net-delta.test.cjs tests/net-observation.test.cjs",
     "test:freeze": "node tests/mage-freeze-e2e.cjs",
     "test:browser": "node tests/browser-e2e.cjs",
-    "test:host": "node tests/host-e2e.cjs && npm run test:host:freeze && npm run test:host:smoothness",
+    "test:host": "node tests/host-e2e.cjs && npm run test:host:freeze && npm run test:host:smoothness && npm run test:host:shared",
     "test:host:freeze": "BRAWL_FREEZE_ONLY=1 node tests/host-e2e.cjs",
     "test": "npm run build && npm run test:artifact && npm run test:rules && npm run test:freeze && npm run test:browser",
     "balance": "node tools/balance.cjs 200",
@@ -25,7 +25,8 @@
     "test:observation": "node --test tests/observation.test.cjs tests/net-observation.test.cjs",
     "kit:update": "node scripts/update-kit.cjs",
     "test:artifact": "node --test tests/artifact.test.cjs",
-    "test:delivery": "npm test && npm run test:host"
+    "test:delivery": "npm test && npm run test:host",
+    "test:host:shared": "BRAWL_SHARED_PET=1 node tests/host-e2e.cjs"
   },
   "engines": {
     "node": ">=22"

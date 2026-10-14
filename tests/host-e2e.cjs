@@ -28,7 +28,7 @@ const evidence = path.join(GAME, 'artifacts/host-e2e', runId);
 const bootstrap = path.join(H.REPO, 'tests/helpers/peer-session-delivery-bootstrap.js');
 const report = { runId, root, scope: 'Actual two hidden production hosts over loopback UDP/TCP/TLS. OS keystore is test AES-GCM only; native Keychain and two physical machines are not covered.', checks: [], failures: [], screenshots: [], dialogs: [], sdkGrants: [], exceptions: [] };
 const apps = [], sockets = [];
-let runtime;
+let runtime,mandatory;
 const json = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2));
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 function check(label, detail) { report.checks.push({ label, pass: true, ...(detail === undefined ? {} : { detail }) }); console.log('PASS', label); }
@@ -54,7 +54,7 @@ async function boot(label, discovery, peerDiscovery) {
     crossScreen: { allowDirectVisits: true, requireVisitConfirmation: false },
     relay: { url: 'ws://127.0.0.1:1', paired: {} }, general: { autoCheckUpdates: false }, tts: { enabled: false },
     plugins: { developerMode: false, registrySources: ['http://127.0.0.1:1/registry.json'] } });
-  app.env = { ...process.env, ELECTRON_RUN_AS_NODE: undefined, PET_USERDATA_DIR: app.profile,
+  app.env = { ...process.env,...(mandatory?.env||{}), ELECTRON_RUN_AS_NODE: undefined, PET_USERDATA_DIR: app.profile,
     PET_E2E_TEST: '1', PET_E2E_HIDDEN: '1', PET_E2E_BACKGROUND: '1', PET_DND_TRIGGER_COUNT: '999',
     PET_ACCOUNT_API_BASE: 'http://127.0.0.1:1', PET_ACTIVITY_BRIDGE_PORT: '0',
     PET_LAN_DISCOVERY_PORT: String(discovery), PET_LAN_DISCOVERY_TARGETS: `127.0.0.1:${peerDiscovery}`,
@@ -66,6 +66,7 @@ async function launch(app) {
   app.run.native = path.join(evidence, app.run.label + '-native.jsonl'); fs.writeFileSync(app.run.native, '');
   app.child = spawn(electron, ['--require', bootstrap, runtime.demo, `--remote-debugging-port=${app.cdp}`, '--use-mock-keychain', '--mute-audio'], { cwd: runtime.demo, env: { ...app.env, PET_PUBLIC_NATIVE_LOG: app.run.native }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   app.run.pid = app.child.pid; app.child.log = ''; app.child.stdout.on('data', x => { app.child.log += x; }); app.child.stderr.on('data', x => { app.child.log += x; });
+  if(mandatory)await mandatory.login(app.cdp,'1997777666'+(app.label.charCodeAt(0)-96));
   app.pet = await H.findTarget(app.cdp, '/index.html');
   await wait(() => H.evalIn(app.pet, 'typeof currentCharKey==="string" && !!frames.idle?.[0]?.[0]?.naturalWidth'), 'real pet decoded ' + app.label);
   await wait(async () => (await H.evalIn(app.pet, H.CANVAS_PIXELS)) > 100, 'real pet painted ' + app.label);
@@ -265,7 +266,7 @@ async function mageFreezePlay(a,b){
 async function brawlPlay(a,b){
   // Both hosts read their current desktop pet; newer hosts hand over the 3D rag doll.
   const kinds={};
-  for(const [app,id] of [[a,'rat-doll-male'],[b,'rat-doll-female']]){
+  for(const [app,id] of [[a,'rat-doll-male'],[b,process.env.BRAWL_SHARED_PET==='1'?'rat-doll-male':'rat-doll-female']]){
     const s=await wait(async()=>{const x=await state(app);return ['sprite','doll3d'].includes(x.driver?.kind)&&x.view?.players?.length===2?x:null;},'fighter + lobby '+app.label);
     assert.equal(s.view.you,app===a?0:1);kinds[app.label]=s.driver.kind;
     const packName=JSON.parse(fs.readFileSync(path.join(PACKS,'../exports/plugins',id,'character.json'))).name;
@@ -276,7 +277,7 @@ async function brawlPlay(a,b){
   // deadline. Two current 3D packs can serialize behind the same TLS transfer
   // queue; the former 30 s fixture deadline stopped while the second was active.
   const appearanceStarted=Date.now();
-  for(const app of [a,b])await wait(async()=>{const f=(await world(app)).fighters;return f.length===2&&f.every(x=>['sprite','doll3d'].includes(x.kind));},'both pets drawn as fighters on '+app.label,130000);
+  for(const app of [a,b])await wait(async()=>{const f=(await world(app)).fighters;return f.length===2&&f.every(x=>['sprite','doll3d'].includes(x.kind));},'both pets drawn as fighters on '+app.label,process.env.BRAWL_SHARED_PET==='1'?10000:130000);
   check('both complete current appearances are actually rendered within the SDK transfer deadline',{elapsedMs:Date.now()-appearanceStarted});
   const names=[(await state(a)).driver.name,(await state(b)).driver.name];
   assert.deepEqual((await state(b)).view.players.map(p=>p.name),names);
@@ -347,6 +348,9 @@ async function brawlPlay(a,b){
   await applyMain(a,'rat-doll-female');
   await wait(async()=>(await state(b)).view.players[0].name!==names[0],'host pet change reaches guest',30000);
   check('host changes desktop pet mid-fight; the guest sees the new fighter without leaving',(await state(b)).view.players[0].name);
+  for(const app of [a,b]){await wait(async()=>{const f=(await world(app)).fighters;return f.length===2&&f.every(p=>p.kind==='doll3d'&&p.visible)&&f[0].name===f[1].name;},'same current 3D appearance actually drawn on both seats '+app.label,10000);await screenshot(app.game,'same-appearance-'+app.label);}
+  check('both fighters keep complete 3D appearances when the pets share one signature');
+
   // The guest walks off the left edge three times (hold S in the air to skip the ledge).
   for(let s=3;s>0;s--){
     await wait(async()=>{const f=(await fighters(a))[1];return f&&['idle','walk','run','air','landing','crouch'].includes(f.state);},'guest can act',10000);
@@ -379,10 +383,11 @@ async function brawlPlay(a,b){
   fs.mkdirSync(evidence,{recursive:true});
   try{
     H.requireNode22();assert(fs.existsSync(source),'build first');report.gameSha256=hash(source);
+    if(fs.existsSync(path.join(HOST,'demo/core/trial-access/index.js'))){mandatory=await require(path.join(HOST,'tests/helpers/mandatory-login-fixture')).createMandatoryLoginFixture();report.admission='real isolated production account service and UI login; unique phone per host';}
     runtime=F.freeze(H.REPO,root,false);report.source=runtime.source;
     const ap=await F.freePort(),bp=await F.freePort(),a=await boot('a',ap,bp),b=await boot('b',bp,ap);
     for(const app of [a,b])await installAppearances(app);
-    await applyMain(a,'rat-doll-male');await applyMain(b,'rat-doll-female');
+    await applyMain(a,'rat-doll-male');await applyMain(b,process.env.BRAWL_SHARED_PET==='1'?'rat-doll-male':'rat-doll-female');
     await sendGame(a,b);await approvals(a,b);
     if(process.env.BRAWL_SMOOTHNESS==='1')await require('./smoothness-host.cjs').run({a,b,H,wait,state,activateButton,check,screenshot,json,evidence,report,k});
     else if(process.env.BRAWL_FREEZE_ONLY==='1')await mageFreezePlay(a,b);
@@ -399,6 +404,7 @@ async function brawlPlay(a,b){
   }finally{
     for(const ws of sockets)ws.close();
     for(const app of apps)await stop(app).catch(e=>report.failures.push('cleanup: '+e.message));
+    if(mandatory)await mandatory.close().catch(e=>report.failures.push('account fixture cleanup: '+e.message));
     if(report.exceptions.length)report.failures.push('uncaught renderer exceptions');
     report.ok=!report.failures.length;json(path.join(evidence,'report.json'),report);
     console.log('REPORT',path.join(evidence,'report.json'),report.ok?'OK':'FAIL');process.exitCode=report.ok?0:1;

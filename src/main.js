@@ -152,7 +152,9 @@ function syncFighters(v){
   for(const p of v.players){
     if(p.seat===v.you)continue;
     const label=p.ai?'CPU':p.seat===0?'1P':'2P';
-    const asset=p.ai?cpuAsset():peerAssets.get(p.signature);
+    // Room skips returning a peer's own look; matching signatures can use the
+    // already validated local appearance for this other fighter too.
+    const asset=p.ai?cpuAsset():p.signature===driver?.profile.signature?driver.asset:peerAssets.get(p.signature);
     if(asset)void world.setFighter(p.seat,{profile:p,asset,label});
     else void world.setFighter(p.seat,{profile:{...p,signature:'pending:'+p.signature},asset:{kind:'toy',species:'mouse',color:p.color},label});
   }

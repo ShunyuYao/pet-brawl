@@ -30,6 +30,10 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     if(guest){
       const online=connection==='connected'&&peerOnline&&t-lastHeard<STALE_MS;
       if(guest.connected!==online)guest.connected=online;
+      // A retained ready intent may arrive before this tick restores the seat's
+      // online flag. Re-evaluate once both seats are ready instead of requiring
+      // another click (or a new ready sequence) after recovery.
+      if(online&&guest.ready&&room.seat(0)?.ready)room.ready(1,true);
       if(!online)room.pauseFor('peer_lost');else room.resume();
       room.checkPause();
     }

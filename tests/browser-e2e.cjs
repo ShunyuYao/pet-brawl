@@ -12,7 +12,7 @@ const out=path.join(ROOT,'artifacts/browser-e2e');fs.mkdirSync(out,{recursive:tr
 const report={checks:[],errors:[],screenshots:[]};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const check=(ok,label,detail)=>{assert.ok(ok,label+(detail!==undefined?' '+JSON.stringify(detail):''));report.checks.push({label,detail});console.log('PASS',label);};
-async function wait(p,expr,label,ms=20000){const until=Date.now()+ms;let last;while(Date.now()<until){last=await p.evaluate(expr).catch(e=>e.message);if(last)return last;await sleep(60);}throw Error('timeout: '+label+' last='+JSON.stringify(last));}
+async function wait(p,expr,label,ms=20000){const until=Date.now()+ms;let last;while(Date.now()<until){try{last=await p.evaluate(expr);if(last)return last;}catch(e){last=e.message;}await sleep(60);}throw Error('timeout: '+label+' last='+JSON.stringify(last));}
 (async()=>{
   assert(fs.existsSync(DOLL),'3D doll pack missing: '+DOLL);assert(fs.existsSync(IMAGE),'image missing: '+IMAGE);
   const port=19000+Math.floor(Math.random()*900),profile=fs.mkdtempSync(path.join(os.tmpdir(),'pet-brawl-e2e-'));
@@ -30,7 +30,10 @@ async function wait(p,expr,label,ms=20000){const until=Date.now()+ms;let last;wh
     check(await p.evaluate('document.querySelector("#music").textContent==="音乐 开"&&document.querySelector("#sfx").textContent==="音效 开"'),'music and sound effects are on by default');
     check(!(await st()).audio.unlocked,'no sound before any user gesture (autoplay policy)');
     await p.press('KeyM');await wait(p,'window.__brawl.state.audio.unlocked&&window.__brawl.state.audio.running','audio unlocked by the first key press',5000);
-    const s0=(await st()).audio.steps;await sleep(1200); // 16th note = 0.1 s at 150 BPM
+    const s0=(await st()).audio.steps;
+    // AudioContext reports running before its device clock necessarily advances.
+    // Require actual music scheduling, within the same 5 s startup deadline.
+    await wait(p,'window.__brawl.state.audio.steps>'+JSON.stringify(s0+8),'menu audio clock actually advances',5000);
     check((await st()).audio.steps>s0+8,'background music is playing (menu layer)',{steps:(await st()).audio.steps});
     // Appearance and style are separate choices.
     check(await p.evaluate('document.querySelector(\'.style-card[data-style="hammer"]\').getAttribute("aria-checked")==="true"'),'奶酪大锤 selected as the style');
