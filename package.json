@@ -1,6 +1,6 @@
 {
   "name": "pet-brawl",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "license": "MIT",
   "description": "桌宠大乱斗：带上桌宠形象的双人平台格斗单文件 HTML，支持互联网、局域网和单人电脑对战",
@@ -13,11 +13,11 @@
     "test:net": "node --test tests/net.test.cjs tests/net-delta.test.cjs tests/net-observation.test.cjs",
     "test:freeze": "node tests/mage-freeze-e2e.cjs",
     "test:browser": "node tests/browser-e2e.cjs",
-    "test:host": "node tests/host-e2e.cjs && npm run test:host:freeze && npm run test:host:smoothness && npm run test:host:shared",
+    "test:host": "node tests/host-e2e.cjs && npm run test:host:freeze && npm run test:host:smoothness && npm run test:host:shared && npm run test:host:local-smoothness && npm run test:host:local-smoothness:3d",
     "test:host:freeze": "BRAWL_FREEZE_ONLY=1 node tests/host-e2e.cjs",
     "test": "npm run build && npm run test:artifact && npm run test:rules && npm run test:freeze && npm run test:browser",
     "balance": "node tools/balance.cjs 200",
-    "test:motion": "node --test tests/motion.test.cjs && npm run test:motion-delay && npm run test:prediction-timeline",
+    "test:motion": "node --test tests/motion.test.cjs && npm run test:motion-delay && npm run test:prediction-timeline && npm run test:local-motion",
     "test:motion-delay": "node --test tests/motion-delay.test.cjs",
     "test:prediction-timeline": "node --test tests/prediction-timeline.test.cjs tests/prediction.test.cjs",
     "test:host:smoothness": "node tests/smoothness-e2e.cjs",
@@ -26,7 +26,10 @@
     "kit:update": "node scripts/update-kit.cjs",
     "test:artifact": "node --test tests/artifact.test.cjs",
     "test:delivery": "npm test && npm run test:host",
-    "test:host:shared": "BRAWL_SHARED_PET=1 node tests/host-e2e.cjs"
+    "test:host:shared": "BRAWL_SHARED_PET=1 node tests/host-e2e.cjs",
+    "test:host:local-smoothness": "node tests/local-smoothness-e2e.cjs",
+    "test:local-motion": "node --test tests/local-motion.test.cjs",
+    "test:host:local-smoothness:3d": "node tests/local-smoothness-e2e.cjs --doll3d"
   },
   "engines": {
     "node": ">=22"

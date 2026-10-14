@@ -3,7 +3,7 @@
 // Brawl keeps its lossless state codec, authoritative rules and frame-indexed prediction.
 const R=require('./room.cjs'),I=require('./input.cjs');
 const {Room}=require('../vendor/pet-kit/index.js');
-const RemoteMotion=require('./remote-motion.cjs'),StateWire=require('./state-wire.cjs'),Prediction=require('./prediction.cjs');
+const LocalMotion=require('./local-motion.cjs'),RemoteMotion=require('./remote-motion.cjs'),StateWire=require('./state-wire.cjs'),Prediction=require('./prediction.cjs');
 const PROTOCOL=Object.freeze({id:'pet-brawl',version:3}),PURPOSE='brawl.profile.v2';
 const VIEW_MS=40,SIM_MS=1000/60,STALE_MS=1500;
 function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()=>{},now=()=>Date.now(),pauseTimeoutMs,observation=null}={}){
@@ -11,7 +11,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
   let lastHeard=0,serial=0,applied=0,peerOnline=false,lastLocalView=0,prepared=null,preparedView=null;
   let pad=I.create(),readySeq=0,readyWant=false,guestReadySeq=0,lastInputSent=0,lastSentKey='';
   let view=null,pred=null,predMatchNo=-1,seq=0,lastViewAt=0,predictionReset=null,inMatch=false;
-  const prediction=Prediction.create(),remoteMotion=RemoteMotion.create(),stateWire=StateWire.create({now}),timers=[];
+  const prediction=Prediction.create(),localMotion=LocalMotion.create(),remoteMotion=RemoteMotion.create(),stateWire=StateWire.create({now}),timers=[];
   const fail=e=>{if(!disposed)onError(e instanceof Error?e:Error(String(e)));};
   function initHost(){host=kit.isHost();if(host&&!room){room=R.create({now,pauseTimeoutMs});room.join(0,profile);onView(room.view(0));}}
   function status(s){
@@ -45,12 +45,15 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     while(guestAcc>=SIM_MS){
       guestAcc-=SIM_MS;
       if(!pred||view?.pause||pred.phase==='results'||predictionReset||connection!=='connected'||t-lastViewAt>STALE_MS)continue;
-      pad.seq=++seq;prediction.tick(pad);pred=prediction.live();
+      const previousFrame=pred.frame;pad.seq=++seq;prediction.tick(pad);pred=prediction.live();
+      if(pred.frame!==previousFrame)localMotion.advance(t-guestAcc);
     }
   }
   function reconcile(v){
+    const previous=pred;
     prediction.reconcile(v,{reset:predictionReset||(lastViewAt&&now()-lastViewAt>STALE_MS?'stale':null)});
     predictionReset=null;pred=prediction.live();predMatchNo=v.matchNo;
+    localMotion.reconcile(previous,pred,now(),{reset:prediction.diagnostics().predictionReset,paused:!!v.pause});
   }
 
   const kit=Room.create(sdk,{
@@ -123,7 +126,7 @@ function create(sdk,{onView=()=>{},onConnection=()=>{},onError=()=>{},onAsset=()
     // Local prediction stays immediate and retains its full collision world.
     present:()=>{
       if(room){if(observation?.enabled)observation.presentation({mode:'authority-live',localSeat:0});return room.room.match;}
-      return remoteMotion.sample(pred,now(),closed,observation?.enabled?value=>observation.presentation(value):null);
+      return remoteMotion.sample(localMotion.sample(pred,now(),closed||!!view?.pause),now(),closed,observation?.enabled?value=>observation.presentation(value):null);
     },
     hostStale:()=>!host&&!closed&&!disposed&&!!view&&(connection!=='connected'||now()-lastViewAt>STALE_MS),
 

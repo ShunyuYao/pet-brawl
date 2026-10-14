@@ -386,10 +386,13 @@ async function brawlPlay(a,b){
     if(fs.existsSync(path.join(HOST,'demo/core/trial-access/index.js'))){mandatory=await require(path.join(HOST,'tests/helpers/mandatory-login-fixture')).createMandatoryLoginFixture();report.admission='real isolated production account service and UI login; unique phone per host';}
     runtime=F.freeze(H.REPO,root,false);report.source=runtime.source;
     const ap=await F.freePort(),bp=await F.freePort(),a=await boot('a',ap,bp),b=await boot('b',bp,ap);
-    for(const app of [a,b])await installAppearances(app);
-    await applyMain(a,'rat-doll-male');await applyMain(b,process.env.BRAWL_SHARED_PET==='1'?'rat-doll-male':'rat-doll-female');
-    await sendGame(a,b);await approvals(a,b);
-    if(process.env.BRAWL_SMOOTHNESS==='1')await require('./smoothness-host.cjs').run({a,b,H,wait,state,activateButton,check,screenshot,json,evidence,report,k});
+    if(process.env.BRAWL_LOCAL_SMOOTHNESS!=='1'||process.env.BRAWL_LOCAL_APPEARANCE==='doll3d'){
+      for(const app of [a,b])await installAppearances(app);
+      await applyMain(a,'rat-doll-male');await applyMain(b,process.env.BRAWL_SHARED_PET==='1'?'rat-doll-male':'rat-doll-female');
+    }
+    await sendGame(a,b);await approvals(a,b,process.env.BRAWL_AUTO_PAIRING!=='1');
+    if(process.env.BRAWL_LOCAL_SMOOTHNESS==='1')await require('./local-smoothness-host.cjs').run({a,b,H,wait,state,activateButton,check,screenshot,json,evidence,report,k});
+    else if(process.env.BRAWL_SMOOTHNESS==='1')await require('./smoothness-host.cjs').run({a,b,H,wait,state,activateButton,check,screenshot,json,evidence,report,k});
     else if(process.env.BRAWL_FREEZE_ONLY==='1')await mageFreezePlay(a,b);
     else await brawlPlay(a,b);
   }catch(error){

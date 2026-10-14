@@ -15,6 +15,10 @@ A single-file HTML platform fighter for the 吐梨邦 desktop pet. Opened inside
 
 Latest: [v0.5.2 download and release notes](https://github.com/ShunyuYao/pet-brawl/releases/tag/v0.5.2). Reconnects no longer resend the whole look, which closed the match after a few Wi-Fi hiccups. Reimport and resend the new HTML after ending the old match.
 
+本分支的 0.6.1 候选修复接收方自己看到自己的角色回拉/抖动：权威位置校正在绘制时平滑收敛，按键仍立即预测，碰撞与胜负仍由房主判定。结束旧对局并重新发送新版 HTML，既有附件不会自动更新。验证范围与失败记录见 [交付记录](docs/lan-self-jitter-delivery.md)。未发布新 Release。
+
+The 0.6.1 candidate smooths the guest's own visible position corrections while retaining immediate local input prediction and host-authoritative collisions/results. End the old match and resend the new HTML; existing attachments do not update automatically. See [validation evidence](docs/lan-self-jitter-delivery.md). No new Release has been published.
+
 ## 玩法
 
 - 被打会累积**伤害百分比**，百分比越高被打得越远，飞出场外就少一条命。每人 3 条命，默认限时 8 分钟（可选 5 / 12）。时间到比剩余命数，再比百分比，仍平手进入 300% 决胜局。
