@@ -16,7 +16,7 @@ async function wait(p,expr,label,ms=20000){const until=Date.now()+ms;let last;wh
 (async()=>{
   assert(fs.existsSync(DOLL),'3D doll pack missing: '+DOLL);assert(fs.existsSync(IMAGE),'image missing: '+IMAGE);
   const port=19000+Math.floor(Math.random()*900),profile=fs.mkdtempSync(path.join(os.tmpdir(),'pet-brawl-e2e-'));
-  const child=spawn(require(path.join(REPO,'demo/node_modules/electron')),[path.join(__dirname,'browser-shell.cjs'),'--remote-debugging-port='+port,'--use-mock-keychain','--mute-audio'],{detached:true,env:{...process.env,ELECTRON_RUN_AS_NODE:'',BRAWL_E2E_PROFILE:profile,BRAWL_HTML:path.join(ROOT,'dist/桌宠大乱斗.html')}});
+  const child=spawn(require(path.join(REPO,'demo/node_modules/electron')),[path.join(__dirname,'browser-shell.cjs'),'--remote-debugging-port='+port,'--use-mock-keychain','--mute-audio'],{detached:true,env:{...process.env,ELECTRON_RUN_AS_NODE:'',PET_USERDATA_DIR:profile,PET_E2E_TEST:'1',PET_E2E_HIDDEN:'1',PET_E2E_BACKGROUND:'1',BRAWL_E2E_PROFILE:profile,BRAWL_HTML:path.join(ROOT,'dist/桌宠大乱斗.html')}});
   let p;const shot=async n=>{report.screenshots.push(await p.screenshot(path.join(out,n+'.png')));};
   try{
     let t;for(let i=0;i<60&&!t;i++){try{t=(await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(x=>x.type==='page'&&x.url.includes('.html'));}catch{}await sleep(250);}
@@ -182,6 +182,24 @@ async function wait(p,expr,label,ms=20000){const until=Date.now()+ms;let last;wh
       if(style==='boxer')check(await p.evaluate('(e=>!e.hidden&&/能量 \\d+/.test(e.textContent))(document.querySelector("#plate-0 .plate-extra"))'),'boxer: the HUD shows the power meter');
       else check(await p.evaluate('document.querySelector("#plate-0 .plate-extra").hidden'),style+': no meter pill on the HUD');
       await sleep(300);await shot('06-style-'+style);
+      if(style==='swift'){
+        const x=(await me()).x;
+        await wait(p,'window.__brawl.state.match.fighters[0].moveFrame>=53','swift punch reaches its damage frame',2000);
+        await shot('06-swift-strike');
+        await wait(p,'window.__brawl.state.match.fighters[0].state==="idle"','swift punch recovers',2000);
+        check(Math.abs((await me()).x-x)<0.01,'swift K stays in place and returns control');
+        await shot('06-swift-recovered');
+        const dummy=(await st()).match.fighters[1];await goTo(dummy.x-16);await sleep(300);
+        check((await me()).x>x+5,'movement works after the neutral punch');
+        await p.press('KeyK');
+        await wait(p,'window.__brawl.state.match.fighters[1].percent>'+dummy.percent,'swift punch actually damages the nearby dummy',3000);
+        check(true,'swift K has real damage as well as its visible punch',(await st()).match.fighters[1].percent);
+        await wait(p,'window.__brawl.state.match.fighters[0].state==="idle"','swift recovers after a hit',3000);
+        const beforeSide=(await me()).x;await p.key('KeyD');await p.press('KeyK');
+        await wait(p,'window.__brawl.state.match.fighters[0].move==="sideB"','D+K remains the dash');
+        await sleep(250);await p.key('KeyD','keyUp');
+        check((await me()).x>beforeSide+5,'swift direction+K still moves forward');
+      }
       check(true,style+': K performs its own neutral special'+(proj?' ('+proj+')':''));
       await p.activate('#leave');await wait(p,'window.__brawl.state.mode==="title"&&!document.querySelector("#title-panel").hidden',style+' title visible again',1500);
     }

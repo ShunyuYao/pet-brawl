@@ -113,6 +113,17 @@ function poseMove(P,f,mo,t,style,REST){
   if(mv?.armor&&mv.kind!=='special'&&fr>=mv.armor.frames[0]&&fr<=mv.armor.frames[1])P.fx.armor=true;
   if(mo.charging){P.fx.charge=Math.min(1,mo.chargeFrames/60);P.shake=0.02+0.03*P.fx.charge;}
   if(style!=='hammer'&&mv?.kind==='special'){
+    if(style==='swift'&&id==='nspecial'){
+      // This is a stationary punch, not a lunge. Its long startup still needs
+      // an actual windup/strike/recovery, timed from the combat hit window.
+      const [start,end]=mv.hitboxes[0].frames,recover=mv.total-1;
+      P.hammer.angle=kf(fr,[[0,REST],[Math.round(start*0.7),2.4],[start-1,2.6],[start,0.05],[end+2,-0.2],[recover,REST]]);
+      P.lean=kf(fr,[[0,0],[12,-0.25],[start-1,-0.25],[start,0.35],[end+3,0.3],[recover,0]]);
+      P.fx.charge=fr<start?fr/start:0;
+      P.fx.trail=fr>=start&&fr<=end+3?1:0;
+      P.shake=fr<start?0.02*P.fx.charge:0;
+      return;
+    }
     switch(type){
       case 'shot':{const c=mv.charge;P.hammer.angle=0.05;P.lean=-0.08;
         if(mo.phase==='charge'&&c){P.fx.charge=Math.min(1,mo.chargeFrames/c.max);P.shake=0.01+0.02*P.fx.charge;}

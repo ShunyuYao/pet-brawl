@@ -425,7 +425,7 @@ function frame(now){
 // ---------- boot ----------
 function matchSummary(m){return m&&{stage:m.stage,phase:m.phase,frame:m.frame,timeLeft:m.timeLeft,timeLimit:m.timeLimit,paused:m.paused,result:m.result,projectiles:m.projectiles.length,
   stats:m.stats.map(s=>({kos:s.kos,falls:s.falls,damageDealt:s.damageDealt,attacksStarted:s.attacksStarted,pressesSeen:{...s.pressesSeen}})),
-  fighters:m.fighters.map(f=>({seat:f.seat,x:f.x,y:f.y,vx:f.vx,vy:f.vy,state:f.state,move:f.move?.id||null,phase:f.move?.phase||null,percent:f.percent,stocks:f.stocks,facing:f.facing,ground:f.ground,jumpsLeft:f.jumpsLeft,shieldHP:f.shieldHP,invincible:f.invincible}))};}
+  fighters:m.fighters.map(f=>({seat:f.seat,x:f.x,y:f.y,vx:f.vx,vy:f.vy,state:f.state,move:f.move?.id||null,moveFrame:f.move?.frame||0,phase:f.move?.phase||null,percent:f.percent,stocks:f.stocks,facing:f.facing,ground:f.ground,jumpsLeft:f.jumpsLeft,shieldHP:f.shieldHP,invincible:f.invincible}))};}
 Object.defineProperty(window,'__brawl',{value:{
   get state(){const v=view?{...view,match:undefined}:null;return {audio:{music:audio.music,sfx:audio.sfx,unlocked:audio.unlocked,...audio.diagnostics()},mode,connection,view:v?structuredClone(v):null,match:matchSummary(currentMatch()),driver:driver&&{...driver.profile},input:I.clone(pad),prefs:{...prefs}};},
   world:()=>world.diagnostics(),transport:()=>transport?.diagnostics()||null,
