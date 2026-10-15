@@ -4,6 +4,7 @@
 // the same bytes. Imported photos stay in this browser profile and the session;
 // nothing is uploaded anywhere else.
 import {openZip,openFolder} from './zip.js';
+import {readWalkAsset} from './walk-animation.js';
 
 export const TOYS=[
   {id:'mouse',name:'奶酪鼠',color:'#ffc93c'},
@@ -48,6 +49,12 @@ export async function imageDriver(file){
 }
 // 2D: the pet the user currently runs, via pet.character (HTML work SDK).
 export async function currentPetDriver(sdk){
+  if(sdk.getAnimationCatalog&&sdk.getAnimation){
+    try{const result=await readWalkAsset(sdk,loadImage);if(result){
+      const d=await finish({name:[...String(result.name||'我的桌宠')].slice(0,16).join(''),color:COLORS[result.key.length%COLORS.length]},result.asset,result.asset.frames[0]);
+      d.characterKey=result.key;d.source='pet';return d;
+    }}catch(e){if(/CHANGED|denied|revoked|inactive/i.test(e.message))throw e;console.warn('walk clip unavailable; same-pet still fallback',e.message);}
+  }
   const current=await sdk.getCurrent({states:['idle']});
   const pose=current?.poses?.find(p=>p.id==='idle');
   if(!pose||!/^data:image\/(png|webp);base64,/.test(pose.dataUrl))throw Error('CHARACTER_IMAGE_UNAVAILABLE');
@@ -117,7 +124,7 @@ export function checkAsset(a){
   const img=v=>typeof v==='string'&&/^data:image\/(webp|png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(v)&&v.length<700000;
   if(!a||typeof a!=='object')return false;
   if(a.kind==='toy')return TOYS.some(t=>t.id===a.species)&&/^#[0-9a-f]{6}$/i.test(a.color);
-  if(a.kind==='sprite')return Array.isArray(a.frames)&&a.frames.length>=1&&a.frames.length<=8&&a.frames.every(img)&&Number.isFinite(a.aspect)&&a.aspect>.05&&a.aspect<20;
+  if(a.kind==='sprite')return Array.isArray(a.frames)&&a.frames.length>=1&&a.frames.length<=8&&a.frames.every(img)&&(!a.walk||(Array.isArray(a.walk.frames)&&a.walk.frames.length>=1&&a.walk.frames.length<=120&&a.walk.frames.every(img)&&Number.isFinite(a.walk.fps)&&a.walk.fps>0&&a.walk.fps<=120&&typeof a.walk.loop==='boolean'&&[-1,1].includes(a.walk.face)))&&(a.face===undefined||[-1,1].includes(a.face))&&JSON.stringify(a).length<1024*1024&&Number.isFinite(a.aspect)&&a.aspect>.05&&a.aspect<20;
   if(a.kind==='doll3d')return ['female','male'].includes(a.person)&&Number.isFinite(a.headScale)&&img(a.head)&&['top','bottom'].every(s=>{const g=a.garments?.[s];return g&&typeof g.kind==='string'&&['front','back','frontBump','backBump'].every(k=>img(g[k]))&&g.shape&&typeof g.shape==='object';});
   return false;
 }

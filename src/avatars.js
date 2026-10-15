@@ -14,6 +14,7 @@ import {createRagdoll} from '../vendor/doll/ragdoll-adapter.js';
 import {createWardrobe,dressPart} from '../vendor/doll/doll-appearance.js';
 import {createGarments} from '../vendor/doll/garment-rig.js';
 import {makeWeapon} from './weapons.js';
+import {walkState,animationFrame} from './walk-animation.js';
 
 const V=(x=0,y=0,z=0)=>new CANNON.Vec3(x,y,z);
 const axisQ=(axis,angle)=>{const q=new CANNON.Quaternion();q.setFromAxisAngle(axis,angle);return q;};
@@ -122,18 +123,22 @@ async function dollAvatar(asset,{height,style='hammer'}){
 // ---------- 2D standee ----------
 async function spriteAvatar(asset,{height,style='hammer'}){
   const textures=await Promise.all(asset.frames.map(loadTexture));
+  const walkTextures=asset.walk?await Promise.all(asset.walk.frames.map(loadTexture)):null;
   const h=height*1.08,w=Math.min(h*2.2,h*asset.aspect);
   const mat=new THREE.MeshStandardMaterial({map:textures[0],transparent:true,alphaTest:.05,side:THREE.DoubleSide,roughness:.9});
   const plane=new THREE.Mesh(new THREE.PlaneGeometry(w,h),mat);plane.castShadow=true;
   const holder=new THREE.Group(),spinner=new THREE.Group(),body=new THREE.Group();
   spinner.position.y=h/2;body.add(plane);spinner.add(body);holder.add(spinner);
   const hammer=makeWeapon(style,height*0.62);spinner.add(hammer);
-  let clock=0;
+  let clock=0,active='idle',frame=0;
   return {kind:'sprite',object:holder,hammer,height,
-    update(dt,P,facing){
-      clock+=dt;if(asset.fps>0&&textures.length>1){const f=Math.floor(clock*asset.fps)%textures.length;if(mat.map!==textures[f])mat.map=textures[f];}
+    update(dt,P,facing,state){
+      const next=walkTextures&&walkState(state)?'walk':'idle';
+      if(next!==active){active=next;clock=0;}else clock+=dt;
+      const clip=active==='walk'?asset.walk:asset,images=active==='walk'?walkTextures:textures;
+      frame=animationFrame(clip,clock);if(mat.map!==images[frame])mat.map=images[frame];
       holder.visible=P.visible;mat.opacity=P.alpha;
-      body.scale.set((P.squash||1)*facing,(P.stretch||1)*(1-(P.crouch||0)*0.22),1);
+      body.scale.set((P.squash||1)*facing*(clip.face??1),(P.stretch||1)*(1-(P.crouch||0)*0.22),1);
       body.position.y=-(P.crouch||0)*h*0.11;
       spinner.rotation.z=-(P.lean||0)*facing*0.9-((P.spin||0)+(P.roll||0))*facing-(P.lie||0)*Math.PI/2*facing;
       spinner.position.y=h/2-(P.lie||0)*h*0.32+(P.offY||0);
@@ -145,7 +150,8 @@ async function spriteAvatar(asset,{height,style='hammer'}){
       hammer.position.set(facing*w*0.18,h*0.05,Math.sin(a)>0.75&&Math.cos(a)<0.35?-0.3:0.22);hammer.rotation.set(0,0,th-Math.PI/2);hammer.scale.setScalar(P.hammer.scale||1);
       hammer.position.x+=P.arms==='grab'?facing*w*0.1*(P.grabReach||0):0;
     },
-    dispose(){textures.forEach(t=>t.dispose());mat.dispose();}};
+    animation:()=>({state:active,frame,frames:(active==='walk'?walkTextures:textures).length,texture:mat.map.uuid,flip:Math.sign(body.scale.x)}),
+    dispose(){[...textures,...(walkTextures||[])].forEach(t=>t.dispose());plane.geometry.dispose();mat.dispose();}};
 }
 
 // ---------- toy mascot ----------

@@ -95,7 +95,7 @@ export function createWorld(canvas){
       k.root.visible=P.visible;
       const sh=P.shake?(Math.random()-.5)*P.shake*4:0;
       k.root.position.set(f.x*S+sh,f.y*S+(f.state==='ledge'?0:0),0);
-      k.avatar.update(dt,P,f.facing);
+      k.avatar.update(dt,P,f.facing,f.state);
       k.shield.visible=P.fx.shield>0;if(k.shield.visible){const r=(0.45+0.95*P.fx.shield)*k.height*0.55;k.shield.scale.setScalar(r);k.shield.material.opacity=0.18+0.25*P.fx.shield;}
       k.halo.visible=P.fx.platform;
       k.stars.visible=P.fx.dizzy;k.stars.rotation.y+=dt*6;
@@ -187,7 +187,7 @@ export function createWorld(canvas){
   return {setFighter,removeFighter,update,resize,renderer,setStage,stageId:()=>stage.id,
     setDebug:v=>{debug.on=!!v;},
     resetEvents:(seq=0)=>{lastSeq=seq;},
-    diagnostics:()=>({stage:stage.id,stageObjects:stage.group.children.length,movingX:stage.moving?.position.x??null,fighters:[...fighters].map(([seat,k])=>({seat,kind:k.kind,name:k.name,visible:!!k.root?.visible,ragdoll:k.avatar?.isRagdoll?.()||false,x:k.root?.position.x})),
+    diagnostics:()=>({stage:stage.id,stageObjects:stage.group.children.length,movingX:stage.moving?.position.x??null,fighters:[...fighters].map(([seat,k])=>({seat,kind:k.kind,name:k.name,animation:k.avatar?.animation?.()||null,visible:!!k.root?.visible,ragdoll:k.avatar?.isRagdoll?.()||false,x:k.root?.position.x})),
       projectiles:projectiles.size,camera:{x:cam.x,y:cam.y,w:cam.w},particles:fx.alive(),calls:renderer.info.render.calls}),
     destroy(){removeEventListener('resize',resize);renderer.dispose();}};
 }
