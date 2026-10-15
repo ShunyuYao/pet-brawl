@@ -1,8 +1,8 @@
 {
   "file": "dist/桌宠大乱斗-LAN.html",
-  "bytes": 887891,
-  "sha256": "0eff4021c4cd220ceb05db67bb873a722bc6d6ac5fa957b30ee47dc157c34ecd",
-  "version": "0.6.1",
+  "bytes": 887869,
+  "sha256": "bfe1d0c82ef3b765451f5861e005a2e3379ae5cc25ec8d418f5007d7f110e4c1",
+  "version": "0.6.2",
   "protocol": {
     "id": "pet-brawl",
     "version": 3

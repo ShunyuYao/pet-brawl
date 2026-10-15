@@ -27,3 +27,7 @@
 给 `PET_BRAWL_ESBUILD` 指定已有 esbuild 路径后执行 `npm run build`。给 `BRAWL_HOST_ROOT` 指定支持完整动画接口的候选宿主根目录后执行 `npm run test:host:walk`。增加 `BRAWL_WALK_PREVIEW=1` 则在隐藏断言完成后显示真实游戏；进程使用一次性的隔离账号与用户目录，退出启动器会清理自己启动的服务。
 
 Context7 本轮不可用；Three 材质/纹理操作参考官方文档 https://threejs.org/docs/ ，实际沿用项目锁定 r164 的已有材质替换与 dispose 路径。
+
+## 验收后的集成授权
+
+用户已确认效果并要求合并进 Git 和安装包。本次去掉试验标题，游戏版本为 0.6.2，进入游戏 main；宿主 Test 同步既有完整动画接口后纳入内置素材。此前“仅本地预览”限制被本次明确授权取代。测试环境依赖宿主源码，不在本公开仓库发布宿主安装位置或凭据。
