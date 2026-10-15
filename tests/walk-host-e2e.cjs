@@ -19,9 +19,9 @@ let cleanup;function stop(){return cleanup||=(async()=>{p?.close();if(app)await 
  const port=await F.freePort();save(path.join(profile,'config.json'),{character:'qiqi',onboarding:{completed:true},behavior:{idleStroll:false,autoSleep:false},general:{autoCheckUpdates:false},relay:{url:''},tts:{enabled:false},plugins:{registrySources:[]}});
  save(path.join(profile,'settings-privacy.json'),{usageStatsEnabled:false});
  app=H.launch({userData:profile,cdpPort:port,bootstrap:path.join(__dirname,'walk-host-bootstrap.cjs'),args:['--mute-audio'],env:{...account.env,BRAWL_HOST_ROOT:HOST,BRAWL_WALK_PREVIEW:process.env.BRAWL_WALK_PREVIEW||'0',PET_E2E_TEST:'1',PET_E2E_HIDDEN:'1',PET_E2E_BACKGROUND:'1',PET_PUBLIC_NATIVE_LOG:path.join(evidence,'native.jsonl')}});
- await account.login(port);const pet=await H.findTarget(port,'/index.html');await wait(()=>H.evalIn(pet,'typeof runCommand==="function"'),'pet kernel');
+ await account.login(port);const pet=await H.findTarget(port,'/index.html');if(process.env.PET_E2E_ELECTRON_BINARY)assert(pet.url.includes('app.asar/'),'must exercise the packaged runtime');await wait(()=>H.evalIn(pet,'typeof runCommand==="function"'),'pet kernel');
  await H.evalIn(pet,'runCommand("voice");true');const chat=await H.findTarget(port,'/chat.html');await wait(()=>H.evalIn(chat,'!!window.chatAPI'),'chat preload');
- const file=path.join(ROOT,'dist/桌宠大乱斗.html'),point=await H.evalIn(pet,'({x:LX+SIZE/2,y:LY+SIZE/2})');
+ const file=process.env.BRAWL_HTML||path.join(ROOT,'dist/桌宠大乱斗.html'),point=await H.evalIn(pet,'({x:LX+SIZE/2,y:LY+SIZE/2})');
  const data={items:[{mimeType:'text/html',data:'',title:path.basename(file),baseURL:''}],files:[file],dragOperationsMask:1};
  for(const type of ['dragEnter','dragOver','drop'])await H.cdp(pet,'Input.dispatchDragEvent',{type,...point,data});
  await wait(()=>H.evalIn(chat,'chatAPI.getCarriedFile().then(c=>!!c?.htmlWork)'),'real imported game');
