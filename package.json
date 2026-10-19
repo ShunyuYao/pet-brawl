@@ -1,6 +1,6 @@
 {
   "name": "pet-brawl",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "license": "MIT",
   "description": "桌宠大乱斗：带上桌宠形象的双人平台格斗单文件 HTML，支持互联网、局域网和单人电脑对战",
@@ -30,7 +30,7 @@
     "test:host:local-smoothness": "node tests/local-smoothness-e2e.cjs",
     "test:local-motion": "node --test tests/local-motion.test.cjs",
     "test:host:local-smoothness:3d": "node tests/local-smoothness-e2e.cjs --doll3d",
-    "test:host:walk": "node tests/walk-host-e2e.cjs",
+    "test:host:walk": "node tests/walk-host-e2e.cjs --character=qiqi && node tests/walk-host-e2e.cjs --character=nienie",
     "test:walk": "node --test tests/walk-animation.test.cjs"
   },
   "engines": {

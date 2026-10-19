@@ -1,5 +1,5 @@
 'use strict';
-// Real SDK + permission dialog + Chromium keyboard; no game-state injection.
+// Real SDK + Chromium keyboard; no game-state injection. Legacy hosts may opt into consent.
 // Only tests the local animation preview, not two-device delivery.
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
 const ROOT=path.resolve(__dirname,'..'),HOST=process.env.BRAWL_HOST_ROOT;
@@ -9,14 +9,15 @@ const {connect}=require('./cdp.cjs');
 const {activateClosingButton}=require(path.join(HOST,'tests/e2e/html-card-input'));
 const profile=fs.mkdtempSync(path.join(os.tmpdir(),'pet-plugin-appearance-brawl-walk-'));
 const evidence=path.join(ROOT,'artifacts/walk-host',new Date().toISOString().replace(/[:.]/g,'-'));fs.mkdirSync(evidence,{recursive:true});
-const report={checks:[],profile};let app,account,p;
+const character=(process.argv.find(a=>a.startsWith('--character='))||'--character=qiqi').split('=')[1];assert(['qiqi','nienie'].includes(character));
+const report={checks:[],profile,character};let app,account,p;
 const save=(file,value)=>fs.writeFileSync(file,JSON.stringify(value,null,2));
 const check=label=>{report.checks.push(label);console.log('PASS',label);};
 async function wait(fn,label,ms=45000){let last;const end=Date.now()+ms;while(Date.now()<end){try{last=await fn();if(last)return last;}catch(e){last=e.message;}await H.sleep(90);}throw Error('Timeout '+label+': '+JSON.stringify(last));}
 let cleanup;function stop(){return cleanup||=(async()=>{p?.close();if(app)await H.stopOwned(app);await account?.close();})();}
 (async()=>{try{
  account=await require(path.join(HOST,'tests/helpers/mandatory-login-fixture')).createMandatoryLoginFixture();
- const port=await F.freePort();save(path.join(profile,'config.json'),{character:'qiqi',onboarding:{completed:true},behavior:{idleStroll:false,autoSleep:false},general:{autoCheckUpdates:false},relay:{url:''},tts:{enabled:false},plugins:{registrySources:[]}});
+ const port=await F.freePort();save(path.join(profile,'config.json'),{character,onboarding:{completed:true},behavior:{idleStroll:false,autoSleep:false},general:{autoCheckUpdates:false},relay:{url:''},tts:{enabled:false},plugins:{registrySources:[]}});
  save(path.join(profile,'settings-privacy.json'),{usageStatsEnabled:false});
  app=H.launch({userData:profile,cdpPort:port,bootstrap:path.join(__dirname,'walk-host-bootstrap.cjs'),args:['--mute-audio'],env:{...account.env,BRAWL_HOST_ROOT:HOST,BRAWL_WALK_PREVIEW:process.env.BRAWL_WALK_PREVIEW||'0',PET_E2E_TEST:'1',PET_E2E_HIDDEN:'1',PET_E2E_BACKGROUND:'1',PET_PUBLIC_NATIVE_LOG:path.join(evidence,'native.jsonl')}});
  await account.login(port);const pet=await H.findTarget(port,'/index.html');if(process.env.PET_E2E_ELECTRON_BINARY)assert(pet.url.includes('app.asar/'),'must exercise the packaged runtime');await wait(()=>H.evalIn(pet,'typeof runCommand==="function"'),'pet kernel');
@@ -27,8 +28,16 @@ let cleanup;function stop(){return cleanup||=(async()=>{p?.close();if(app)await 
  await wait(()=>H.evalIn(chat,'chatAPI.getCarriedFile().then(c=>!!c?.htmlWork)'),'real imported game');
  assert.equal((await H.evalIn(chat,'chatAPI.e2eOpenReceivedHtmlWork("fixture-sender-a")')).ok,true);
  const game=await H.findReadyTarget(port,'pet-work://','pet');p=await connect(game);
- const dialog=await H.findReadyTarget(port,'/dialog.html','dialogAPI');await activateClosingButton(port,dialog,'.btn-primary');
+ // Current hosts grant declared game capabilities without a technical consent dialog.
+ if(process.env.BRAWL_LEGACY_CONSENT==='1'){const dialog=await H.findReadyTarget(port,'/dialog.html','dialogAPI');await activateClosingButton(port,dialog,'.btn-primary');}
  await wait(()=>p.evaluate('document.querySelector("#use-pet")?.disabled===false'),'current pet loaded');
+ const esbuild=require(process.env.PET_BRAWL_ESBUILD||path.join(HOST,'demo/node_modules/esbuild'));
+ const probe=esbuild.buildSync({entryPoints:[path.join(ROOT,'src/walk-animation.js')],bundle:true,format:'iife',globalName:'WalkProbe',write:false}).outputFiles[0].text;
+ await p.evaluate(probe);
+ report.appearance=await p.evaluate(`(async()=>{const {asset}=await WalkProbe.readWalkAsset(pet.character,s=>new Promise((r,j)=>{const i=new Image();i.onload=()=>r(i);i.onerror=j;i.src=s}));const catalog=await pet.character.getAnimationCatalog();return {bytes:new TextEncoder().encode(JSON.stringify(asset)).length,frames:asset.walk.frames.length,registeredFrames:catalog.states.find(s=>s.id==="walk").variants.find(v=>v.available).frameCount,stillBytes:asset.frames[0].length};})()`);
+ console.log('APPEARANCE',JSON.stringify(report.appearance));save(path.join(evidence,'report.json'),report);
+ assert.equal(report.appearance.frames,report.appearance.registeredFrames,'all registered frames preserved');
+ assert(report.appearance.bytes<=64*1024,'complete animation must fit a short paced internet transfer (64 KiB)');
  await p.activate('#cpu-list [data-value="0"]');await p.activate('#solo');
  await wait(()=>p.evaluate('window.__brawl.state.match?.phase==="fight"'),'training fight');
  await p.evaluate('document.activeElement?.blur();true');
@@ -38,7 +47,7 @@ let cleanup;function stop(){return cleanup||=(async()=>{p?.close();if(app)await 
   const samples=[];await p.key(code);
   try{for(let i=0;i<5;i++){await H.sleep(95);samples.push(await visual());}
    assert(samples.every(v=>v.animation.state==='walk'),'ground movement selects walk');
-   assert(samples.every(v=>v.animation.frames===20),'complete Qiqi walk, no dropped frames');
+   assert(samples.every(v=>v.animation.frames===report.appearance.registeredFrames),'complete registered walk, no dropped frames');
    assert(new Set(samples.map(v=>v.animation.texture)).size>1,'actual material texture advances');
    assert(samples.every(v=>v.animation.flip===flip),'native facing');
    await p.screenshot(path.join(evidence,code+'.png'));
