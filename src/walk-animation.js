@@ -27,14 +27,14 @@ export async function readWalkAsset(sdk,loadImage){
  if(x1<=x0||y1<=y0)throw Error('CHARACTER_ANIMATION_INVALID');
  x0=Math.max(0,x0-4);y0=Math.max(0,y0-4);x1=Math.min(W,x1+5);y1=Math.min(H,y1+5);
  const w=x1-x0,h=y1-y0;
- // The host deliberately paces appearances at 12 KiB/s. The former 900 KiB
- // allowance made an ordinary 20-frame pet invisible for ~40 seconds. Fit the
- // entire clip in ~5.4 seconds of that budget; never discard animation frames.
- for(const max of [256,192,160,128,96,64]){
-  const scale=Math.min(1,max/Math.max(w,h));c.width=Math.round(w*scale);c.height=Math.round(h*scale);
-  const encoded=images.map(img=>{g.clearRect(0,0,c.width,c.height);g.drawImage(img,x0,y0,w,h,0,0,c.width,c.height);return c.toDataURL('image/webp',.78);});
+ // Spatial detail is a quality floor, not a knob for satisfying a network
+ // budget. Preserve every registered frame; vary codec quality only. The host
+ // sends bounded, paced frames concurrently with realtime game input.
+ const scale=Math.min(1,384/Math.max(w,h));c.width=Math.round(w*scale);c.height=Math.round(h*scale);
+ for(const quality of [.86,.78,.7]){
+  const encoded=images.map(img=>{g.clearRect(0,0,c.width,c.height);g.drawImage(img,x0,y0,w,h,0,0,c.width,c.height);return c.toDataURL('image/webp',quality);});
   const asset={kind:'sprite',frames:[encoded[0]],fps:0,face:idle.face??1,aspect:c.width/c.height,walk:{frames:encoded.slice(1),fps:walk.fps,loop:walk.loop,face:walk.face??1}};
-  if(JSON.stringify(asset).length<=64*1024)return {asset,key:catalog.key,name:catalog.name};
+  if(JSON.stringify(asset).length<=900*1024)return {asset,key:catalog.key,name:catalog.name};
  }
  throw Error('asset_too_large');
 }

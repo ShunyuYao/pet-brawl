@@ -115,3 +115,9 @@ MIT
 本候选固定使用 pet-kit 0.2.1（MIT）；Room 管理传输、形象和限额，游戏保留自己的差分状态、预测和插值。异步状态应用完成后才确认基线；SDK 成功发送通知不等于接收端确认。`PET_KIT_DIR=/absolute/pet-kit npm run kit:update` 导入已审核的库源码，构建会校验 vendor 摘要。
 
 This candidate vendors pet-kit 0.2.1 while retaining game-specific state deltas, prediction and interpolation. Both peers must use the same artifact and application protocol v3. No installer or release is published by this source change.
+
+## 0.6.4 形象清晰度修复
+
+修复完整行走为了满足64KiB网络预算退化到64像素的问题。当前形象与全部原始行走帧统一裁切，最长边保留384像素；帧数、时间、循环和朝向不变，整个形象仍受900KiB预算约束。超出预算时保留同一角色的清楚静态形象，不再无限缩小。较快加载需要修复后的宿主传输策略；旧宿主仍能读取相同资源格式，但可能加载较慢。
+
+`test:host:walk` 在隐藏真实桌宠里覆盖全部八个内置角色、SDK分页、分辨率、完整帧、真实键盘移动和跳跃/攻击切换；指定 `BRAWL_HOST_ROOT`，外置检出时指定 `PET_BRAWL_ESBUILD`。问题由用户实际游玩发现，旧测试仅检查完整帧与数据大小而遗漏空间清晰度；新增尺寸门槛防止同类回归。
